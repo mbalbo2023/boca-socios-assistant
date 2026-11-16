@@ -10,6 +10,7 @@ from functools import partial
 
 OPERATIONS = {
     "telegram-prepare-diagnose": "diagnose",
+    "telegram-public-boundary-observe": "boundary",
     "telegram-schema-observe": "observe",
     "telegram-migrate": "migrate",
     "telegram-prepare": "prepare",
@@ -73,6 +74,49 @@ def _diagnosis_cli(verify_only: bool, source_sha: str, workflow_sha: str, attemp
     return 0 if value["state"] == "OBSERVED_NO_GO" else 3
 
 
+def _boundary_cli(verify_only: bool, source_sha: str, workflow_sha: str, attempt_id: str) -> int:
+    from boca_socios.host_boca_cleanup import protected_boca_job_lease
+    from boca_socios.host_telegram_status import (
+        _boundary_frame,
+        _boundary_initial,
+        diagnose_public_boundary,
+        verify_public_boundary,
+    )
+
+    arguments = {"attempt_id": attempt_id, "source_sha": source_sha, "workflow_sha": workflow_sha}
+    if verify_only:
+        raw = sys.stdin.buffer.read(4097)
+        verify_public_boundary(raw, **arguments, allow_failure=True)
+        sys.stdout.buffer.write(raw)
+        return 0
+    value = _boundary_initial(attempt_id, workflow_sha)
+    signal.signal(signal.SIGTERM, _interrupted)
+    signal.signal(signal.SIGHUP, _interrupted)
+    entered = received = False
+    try:
+        with protected_boca_job_lease(attempt_id) as lease:
+            entered = True
+            raw = diagnose_public_boundary(
+                attempt_id,
+                lease=lease,
+                expected_source_sha=source_sha,
+                workflow_sha=workflow_sha,
+            )
+            value = verify_public_boundary(raw, **arguments, allow_failure=True)
+            received = True
+    except Exception:
+        value.update(
+            state="INCOMPLETE_NO_GO",
+            recommendation="PRESERVE_NO_RETRY",
+            phase="LEASE" if not entered or received else "PREFLIGHT",
+            reason="LEASE_UNVERIFIED" if not entered or received else "TRANSPORT_UNVERIFIED",
+        )
+    raw = _boundary_frame(value)
+    verify_public_boundary(raw, **arguments, allow_failure=True)
+    sys.stdout.buffer.write(raw)
+    return 0 if value["state"] == "OBSERVED_NO_GO" else 3
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -120,6 +164,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError("arguments")
         if operation == "telegram-prepare-diagnose":
             return _diagnosis_cli(verify_only, source_sha, workflow_sha, attempt_id)
+        if operation == "telegram-public-boundary-observe":
+            return _boundary_cli(verify_only, source_sha, workflow_sha, attempt_id)
         from boca_socios.host_telegram_backend import (
             TelegramBackendError,
             TelegramBackendReceipt,

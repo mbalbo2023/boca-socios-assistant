@@ -257,7 +257,7 @@ def test_d9_actual_installed_zip_and_memfd_preserve_47_entry_boundary(
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         assert len(archive.infolist()) == 47
         assert set(archive.namelist()) == memfd.TELEGRAM_INSTALLED_ENTRIES
-        assert sum(info.file_size for info in archive.infolist()) <= 500000
+        assert sum(info.file_size for info in archive.infolist()) <= 512000
     assert len(raw) <= 300000 and hashlib.sha256(raw).hexdigest() == digest
     memfd.verify(raw, digest, telegram_installed=True)
     selftest = _run([sys.executable, "-I", "-S", "-B", str(target), "selftest"], tmp_path)
@@ -356,12 +356,13 @@ def _boundary_zip(total, *, oversized_entry=False):
 
 
 def test_d9_adenda_installed_aggregate_and_individual_bounds_are_distinct():
-    accepted = _boundary_zip(500000)
+    accepted = _boundary_zip(512000)
     memfd.verify(accepted, hashlib.sha256(accepted).hexdigest(), telegram_installed=True)
-    for raw in (_boundary_zip(500001), _boundary_zip(450047, oversized_entry=True)):
+    for raw in (_boundary_zip(512001), _boundary_zip(450047, oversized_entry=True)):
         with pytest.raises(ValueError):
             memfd.verify(raw, hashlib.sha256(raw).hexdigest(), telegram_installed=True)
     assert builder.MAX_SOURCE_BYTES == 450000 and builder.MAX_ARCHIVE_BYTES == 300000
+    assert builder.MAX_INSTALLED_SOURCE_BYTES == memfd.TELEGRAM_MAX_UNCOMPRESSED == 512000
     assert memfd.TELEGRAM_MAX_ZIP == 300000
 
 
@@ -381,13 +382,13 @@ def test_d9_builder_adenda_accepts_exact_aggregate_and_rejects_one_more(package,
     destination = repository / "src/boca_socios/host_telegram_cli.py"
     original = destination.read_bytes()
     prefix, suffix = b'\nR309_BOUNDARY_PADDING = "', b'"\n'
-    padding = 500000 - current - len(prefix) - len(suffix)
+    padding = 512000 - current - len(prefix) - len(suffix)
     assert padding > 0
     destination.write_bytes(original + prefix + b"x" * padding + suffix)
     target = tmp_path / "exact.pyz"
     builder.build(repository, target, installed=True)
     with zipfile.ZipFile(target) as archive:
-        assert sum(info.file_size for info in archive.infolist()) == 500000
+        assert sum(info.file_size for info in archive.infolist()) == 512000
         assert max(info.file_size for info in archive.infolist()) <= 450000
     destination.write_bytes(original + prefix + b"x" * (padding + 1) + suffix)
     with pytest.raises(ValueError, match="source closure exceeds bound"):

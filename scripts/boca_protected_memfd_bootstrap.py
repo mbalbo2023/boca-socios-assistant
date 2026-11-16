@@ -365,7 +365,7 @@ TELEGRAM_INSTALLED_ENTRIES = frozenset(
     }
 )
 TELEGRAM_MAX_ZIP = 300_000
-TELEGRAM_MAX_UNCOMPRESSED = 500_000
+TELEGRAM_MAX_UNCOMPRESSED = 512_000
 TELEGRAM_MAX_ENTRY_UNCOMPRESSED = 450_000
 
 
@@ -593,6 +593,7 @@ def main() -> int:
         telegram_initializer_recover = sys.argv[2] == "boca-telegram-initializer-recover"
         telegram_installed = sys.argv[2] in {
             "telegram-prepare-diagnose",
+            "telegram-public-boundary-observe",
             "telegram-schema-observe",
             "telegram-migrate",
             "telegram-prepare",

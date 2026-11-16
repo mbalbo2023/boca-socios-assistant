@@ -111,7 +111,7 @@ def test_mobile_prepare_artifact_is_not_itself_approval_or_telegram_access() -> 
     assert "retention-days: 2" in artifact
     assert "BOCA_LIFECYCLE_GO_BINDING_SHA256" in w
     assert (
-        "telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender|telegram-prepare-diagnose)"
+        "telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender|telegram-prepare-diagnose|telegram-public-boundary-observe)"
         in w
     )
     telegram = _step("Execute installed Telegram transaction under one protected lease")
