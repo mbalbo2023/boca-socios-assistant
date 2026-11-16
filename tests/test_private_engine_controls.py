@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from boca_socios.panel.private_http import PrivatePanelApplication
-from test_private_beta_panel import FakeHost, _app, _login, _passkey, _request
+from test_private_beta_panel import PERMISSIONS, FakeHost, _app, _login, _passkey, _request
 
 
 class Engines:
@@ -32,8 +32,8 @@ class Engines:
         return None
 
 
-def panel(tmp_path, monkeypatch):
-    provider, key, credential = _passkey([0.0])
+def panel(tmp_path, monkeypatch, *, permissions=PERMISSIONS):
+    provider, key, credential = _passkey([0.0], permissions=permissions)
     legacy, db = _app(tmp_path / "boca.sqlite3", provider, FakeHost())
     engines = Engines()
     app = PrivatePanelApplication(
@@ -106,14 +106,131 @@ def test_metadata_and_inspection_routes_require_owner_and_do_not_start_work(tmp_
     assert engines.calls == []
 
 
-def test_token_monitor_reuses_live_session_inventory_instead_of_a_static_count(
+def test_owner_token_monitor_redirects_to_activity_without_allocating_operations(
     tmp_path, monkeypatch
 ):
     app, engines, cookie = panel(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        app._sessions, "new_operation", lambda *a, **k: pytest.fail("GET allocated")
+    )
+    assert _request(app, "/monitor/tokens")[0] == 401
+    code, headers, page = _request(app, "/monitor/tokens", cookie=cookie)
+    assert code == 303 and headers["Location"] == "/control/actividad"
+    assert headers["Cache-Control"] == "no-store"
+    assert page == b""
+    code, headers, page = _request(app, "/control/actividad", cookie=cookie)
+    assert code == 200 and headers["Cache-Control"] == "no-store"
+    assert b"/control/actividad.json" in page
+    assert b'action="/control/motores/' not in page
+    assert _request(app, "/monitor/tokens.json", cookie=cookie)[0] == 200
+    assert engines.calls == []
+
+
+@pytest.mark.parametrize("path", ["/", "/control"])
+def test_control_aliases_keep_controls_and_three_primary_navigation_links(
+    tmp_path, monkeypatch, path
+):
+    app, engines, cookie = panel(tmp_path, monkeypatch)
+    assert _request(app, path)[0] == 401
+    code, _, page = _request(app, path, cookie=cookie)
+    assert code == 200
+    assert b'action="/control/motores/queues_tokens/iniciar"' in page
+    primary = re.search(rb'<nav aria-label="Principal">(.*?)</nav>', page, re.S)
+    assert primary is not None
+    assert re.findall(rb'href="([^"]+)"[^>]*>([^<]+)</a>', primary[1]) == [
+        (b"/control", b"Control"),
+        (b"/control/actividad", b"Actividad"),
+        (b"/configuracion", "Configuración".encode()),
+    ]
+    secondary = re.search(
+        r"<details>\s*<summary>Más secciones</summary>(.*?)</details>".encode(), page, re.S
+    )
+    assert secondary is not None
+    for target in (
+        b"/socios",
+        b"/comandos",
+        b"/telegram",
+        b"/estado",
+        b"/avisos",
+        b"/avisos-oficiales",
+        b"/monitor/tokens",
+    ):
+        assert b'href="' + target + b'"' in secondary[1]
+    assert engines.calls == []
+
+
+def test_reader_token_monitor_keeps_legacy_view_and_owner_routes_stay_forbidden(
+    tmp_path, monkeypatch
+):
+    app, engines, cookie = panel(
+        tmp_path, monkeypatch, permissions=frozenset({"members:enroll", "local-status:read"})
+    )
+    monkeypatch.setattr(
+        app._sessions, "new_operation", lambda *a, **k: pytest.fail("GET allocated")
+    )
     code, headers, page = _request(app, "/monitor/tokens", cookie=cookie)
     assert code == 200 and headers["Cache-Control"] == "no-store"
-    assert b"/control/motores.json" in page
+    assert b"Monitor de tokens" in page and b"Queue-it" in page
+    assert b'action="/monitor/tokens/revelar"' not in page
+    assert _request(app, "/monitor/tokens.json", cookie=cookie)[0] == 200
+    for path in (
+        "/control",
+        "/control/actividad",
+        "/control/actividad.json",
+        "/control/motores.json",
+    ):
+        assert _request(app, path, cookie=cookie)[0] == 403
+    assert _request(app, "/monitor/tokens/revelar", cookie=cookie, method="POST")[0] == 403
     assert engines.calls == []
+
+
+def test_login_keeps_passkey_without_private_navigation(tmp_path):
+    provider, _, _ = _passkey([0.0])
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost())
+    code, headers, page = _request(app, "/ingresar")
+    assert code == 200 and b'id="passkey"' in page
+    assert b"data-challenge=" in page and b"navigator.credentials.get" in page
+    assert b"<nav" not in page
+    assert b'href="/control"' not in page and b'href="/configuracion"' not in page
+    assert "'sha256-" in headers["Content-Security-Policy"]
+
+
+def test_live_activity_html_keeps_timeline_with_real_engine_coordinator(tmp_path):
+    from boca_socios.integration.engine_sessions import EngineSessionCoordinator
+    from test_engine_session_coordinator import prepared_store
+
+    db, _vault, _member, store = prepared_store(tmp_path)
+    provider, key, credential = _passkey([0.0])
+    legacy, _ = _app(db.path, provider, FakeHost())
+    wakes = []
+    engines = EngineSessionCoordinator(store=store, wake=wakes.append)
+    app = PrivatePanelApplication(
+        origin=legacy._origin,
+        database_path=db.path,
+        owner_subject="owner",
+        passkey=provider,
+        members=legacy._members,
+        commands=legacy._commands,
+        events=legacy._events,
+        bot_control=wakes.append,
+        engine_control=engines,
+    )
+    cookie = _login(app, key, credential)
+    try:
+        assert _request(app, "/control/actividad")[0] == 401
+        code, headers, page = _request(app, "/control/actividad", cookie=cookie)
+        assert code == 200 and headers["Cache-Control"] == "no-store"
+        assert b"Actividad del worker y Chromium" in page
+        assert b"Pausar actualizaciones" in page
+        assert b"/control/actividad.json" in page
+        assert b"/control/motores.json" in page
+        assert b'action="/control/motores/' not in page
+        assert _request(app, "/control/actividad.json", cookie=cookie)[0] == 200
+        code, alias_headers, _ = _request(app, "/monitor/tokens", cookie=cookie)
+        assert code == 303 and alias_headers["Location"] == "/control/actividad"
+        assert wakes == []
+    finally:
+        engines.close()
 
 
 def test_session_reveal_form_keeps_origin_and_secret_requires_one_owner_post(tmp_path, monkeypatch):

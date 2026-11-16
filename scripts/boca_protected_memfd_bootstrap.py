@@ -156,6 +156,9 @@ BINDING_ENTRIES = (
         "boca_socios/host_boca_binding_observe.py",
     }
 )
+PUBLIC_RECIPIENT_METADATA_ENTRIES = BINDING_ENTRIES | {
+    "boca_socios/host_boca_public_recipient_metadata.py",
+}
 TELEGRAM_INCIDENT_ENTRIES = BINDING_ENTRIES | {
     "boca_socios/host_telegram_incident_readonly.py",
     "boca_socios/telegram_maintenance_contract.py",
@@ -384,6 +387,7 @@ def verify(
     current_retained_observe: bool = False,
     installed_admin: bool = False,
     binding_observe: bool = False,
+    public_recipient_metadata_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
     rootless_mapped_observe: bool = False,
@@ -408,6 +412,7 @@ def verify(
                 current_retained_observe,
                 installed_admin,
                 binding_observe,
+                public_recipient_metadata_observe,
                 sqlite_observe,
                 pair_upgrade,
                 rootless_mapped_observe,
@@ -443,7 +448,7 @@ def verify(
         else SQLITE_OBSERVE_MAX_ZIP
         if sqlite_observe
         else BINDING_MAX_ZIP
-        if binding_observe
+        if binding_observe or public_recipient_metadata_observe
         else PAIR_MAX_ZIP
         if pair_observe
         else POSTCOMMIT_MAX_ZIP
@@ -482,7 +487,7 @@ def verify(
         else SQLITE_OBSERVE_MAX_UNCOMPRESSED
         if sqlite_observe
         else BINDING_MAX_UNCOMPRESSED
-        if binding_observe
+        if binding_observe or public_recipient_metadata_observe
         else PAIR_MAX_UNCOMPRESSED
         if pair_observe
         else POSTCOMMIT_MAX_UNCOMPRESSED
@@ -529,6 +534,8 @@ def verify(
             if rootless_mapped_observe
             else (SQLITE_OBSERVE_ENTRIES,)
             if sqlite_observe
+            else (PUBLIC_RECIPIENT_METADATA_ENTRIES,)
+            if public_recipient_metadata_observe
             else (BINDING_ENTRIES,)
             if binding_observe
             else (PAIR_ENTRIES,)
@@ -615,6 +622,7 @@ def main() -> int:
             "boca-installed-admin-provision",
         )
         binding_observe = sys.argv[2] == "boca-binding-observe"
+        public_recipient_metadata_observe = sys.argv[2] == "boca-public-recipient-metadata-observe"
         sqlite_observe = sys.argv[2] == "boca-sqlite-inode-observe"
         pair_upgrade = sys.argv[2] == "boca-pair-upgrade-apply"
         rootless_mapped_observe = sys.argv[2] == "boca-rootless-mapping-observe"
@@ -670,6 +678,12 @@ def main() -> int:
             raise ValueError("installed Boca administration requires exact observer coordinates")
         if binding_observe and len(sys.argv) != 4:
             raise ValueError("Boca binding observer requires one GitHub run ID only")
+        if public_recipient_metadata_observe and (
+            len(sys.argv) != 5
+            or re.fullmatch(r"[1-9][0-9]{0,19}", sys.argv[3]) is None
+            or re.fullmatch(r"[0-9a-f]{40}", sys.argv[4]) is None
+        ):
+            raise ValueError("recipient metadata observer requires run ID and workflow SHA")
         if sqlite_observe and len(sys.argv) != 4:
             raise ValueError("Boca SQLite witness requires one GitHub run ID only")
         if pair_upgrade and len(sys.argv) != 10:
@@ -704,7 +718,7 @@ def main() -> int:
             else SQLITE_OBSERVE_MAX_ZIP
             if sqlite_observe
             else BINDING_MAX_ZIP
-            if binding_observe
+            if binding_observe or public_recipient_metadata_observe
             else PAIR_MAX_ZIP
             if pair_observe
             else POSTCOMMIT_MAX_ZIP
@@ -736,6 +750,7 @@ def main() -> int:
             current_retained_observe=current_retained_observe,
             installed_admin=installed_admin,
             binding_observe=binding_observe,
+            public_recipient_metadata_observe=public_recipient_metadata_observe,
             sqlite_observe=sqlite_observe,
             pair_upgrade=pair_upgrade,
             rootless_mapped_observe=rootless_mapped_observe,

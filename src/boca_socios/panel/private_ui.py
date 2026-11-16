@@ -72,6 +72,7 @@ const list = document.getElementById('worker-events');
 const summary = document.getElementById('worker-activity-status');
 const telemetry = document.getElementById('chromium-telemetry-status');
 const refreshed = document.getElementById('worker-activity-refreshed');
+const observed = document.getElementById('worker-activity-observed');
 const toggle = document.getElementById('worker-activity-toggle');
 const manual = document.getElementById('worker-activity-refresh');
 const labels = {owner: 'Panel', host: 'Ejecutor',
@@ -104,6 +105,8 @@ async function updateActivity() {
       }
       list.replaceChildren(...children);
       const latest = data.events.at(-1);
+      observed.textContent = latest ? 'Último evento recibido: ' + formatPrivateTime(latest.at) :
+        'Sin evento recibido; estado UNKNOWN.';
       summary.textContent = latest ? 'Último evento: ' + latest.message :
         'Sin eventos registrados.';
       lastEvents = signature;
@@ -129,7 +132,7 @@ async function updateActivity() {
 manual.addEventListener('click', updateActivity);
 toggle.addEventListener('click', () => {
   paused = !paused;
-  toggle.textContent = paused ? 'Reanudar actualizaciones' : 'Pausar actualizaciones';
+  toggle.textContent = paused ? 'Reanudar actualizaciones del registro' : 'Pausar actualizaciones del registro';
   toggle.setAttribute('aria-pressed', String(paused));
   if (!paused) updateActivity();
 });
@@ -155,19 +158,30 @@ CSP = (
 )
 
 
-def _page(title: str, content: str, *, body_attributes: str = "", script: str = "") -> bytes:
+def _page(
+    title: str,
+    content: str,
+    *,
+    body_attributes: str = "",
+    script: str = "",
+    private_navigation: bool = True,
+) -> bytes:
+    navigation = (
+        '<nav aria-label="Principal"><a href="/control">Control</a> · '
+        '<a href="/control/actividad">Actividad</a> · '
+        '<a href="/configuracion">Configuración</a></nav>'
+        '<details><summary>Más secciones</summary><nav aria-label="Secciones secundarias">'
+        '<a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> · '
+        '<a href="/telegram">Telegram</a> · <a href="/estado">Estado</a> · '
+        '<a href="/avisos">Avisos</a> · <a href="/avisos-oficiales">Eventos oficiales</a> · '
+        '<a href="/monitor/tokens">Monitor de tokens</a></nav></details>'
+        if private_navigation
+        else ""
+    )
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(title)} · Boca Socios Assistant</title><style>{STYLE}</style></head>
-<body{body_attributes}><nav aria-label="Secciones"><a href="/">Inicio</a> ·
-<a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> ·
-<a href="/control">Control</a> ·
-<a href="/control/actividad">Actividad del worker</a> ·
-<a href="/monitor/tokens">Monitor de tokens</a> ·
-<a href="/configuracion">Configuración</a> ·
-<a href="/telegram">Telegram</a> ·
-<a href="/estado">Estado</a> · <a href="/avisos">Avisos</a> ·
-<a href="/avisos-oficiales">Eventos oficiales</a></nav>
+<body{body_attributes}>{navigation}
 <main>{content}</main>{script}</body></html>""".encode()
 
 
@@ -184,6 +198,7 @@ def login(challenge: str, credential_id: str) -> bytes:
         '<p id="result" role="status" aria-live="polite"></p>',
         body_attributes=attributes,
         script=f"<script>{_LOGIN_SCRIPT}</script>",
+        private_navigation=False,
     )
 
 
@@ -529,12 +544,29 @@ def bot_control(
     )
 
 
-def worker_activity(snapshot: WorkerActivitySnapshot) -> bytes:
-    """Voice-friendly live view of fixed, redacted events only."""
+def worker_activity(
+    snapshot: WorkerActivitySnapshot,
+    *,
+    engine_snapshot: Mapping[str, object] | None = None,
+    members: tuple[MemberView, ...] = (),
+) -> bytes:
+    """Read-only engine observations and the existing fixed, redacted timeline."""
+    from boca_socios.panel import engine_view
+
+    engines = (
+        engine_view.activity_content(engine_snapshot, members)
+        if engine_snapshot is not None
+        else ""
+    )
+    engine_script = (
+        f"<style>{engine_view._STYLE}</style><script>{engine_view._SCRIPT}</script>"
+        if engine_snapshot is not None
+        else ""
+    )
     rows = "".join(
         "<li>"
-        + escape(item.at)
-        + " UTC · "
+        + escape(engine_view._time(item.at))
+        + " · "
         + escape(item.source)
         + " · "
         + escape(item.message)
@@ -547,27 +579,33 @@ def worker_activity(snapshot: WorkerActivitySnapshot) -> bytes:
         "degraded": "Telemetría de Chromium no verificable; consultar estado protegido.",
     }[snapshot.chromium_telemetry]
     return _page(
-        "Actividad del worker y Chromium",
-        "<h1>Actividad del worker y Chromium</h1>"
+        "Actividad",
+        "<h1>Actividad</h1>" + engines + "<h2>Actividad del worker y Chromium</h2>"
         "<p>Eventos comprobables de inicio, ejecución y cierre, actualizados cada cinco segundos "
         "mientras esta pantalla está visible. No es una consola Docker ni muestra credenciales, "
-        "datos de socios o pasos internos de una web real.</p>"
+        "datos de socios o pasos internos de una web real en este registro.</p>"
         "<p>Los recibos del ejecutor acreditan sólo el momento en que fueron emitidos; "
         "las etapas de Chromium son señales del proceso aislado, no pruebas de salud del host.</p>"
         f'<p id="chromium-telemetry-status">{escape(health)}</p>'
         '<button id="worker-activity-refresh" type="button">Actualizar ahora</button>'
         '<button id="worker-activity-toggle" type="button" aria-pressed="false">'
-        "Pausar actualizaciones</button>"
+        "Pausar actualizaciones del registro</button>"
         '<p id="worker-activity-refreshed">Consulta inicial: '
-        + escape(snapshot.observed_at)
-        + " UTC</p>"
+        + escape(engine_view._time(snapshot.observed_at))
+        + '</p><p id="worker-activity-observed">Último evento recibido: '
+        + escape(
+            engine_view._time(snapshot.events[-1].at)
+            if snapshot.events
+            else "Sin evento recibido; estado UNKNOWN."
+        )
+        + "</p>"
         '<p id="worker-activity-status" role="status" aria-live="polite">'
         "Actividad cargada.</p>"
         '<ol id="worker-events" aria-label="Eventos recientes" aria-live="off">'
         + (rows or "<li>Todavía no hay eventos registrados.</li>")
         + "</ol><noscript>Actualice esta página para consultar los eventos nuevos.</noscript>"
         '<p><a href="/control">Volver al control del bot</a></p>',
-        script=f"<script>{_ACTIVITY_SCRIPT}</script>",
+        script=engine_script + f"<script>{_ACTIVITY_SCRIPT}</script>",
     )
 
 

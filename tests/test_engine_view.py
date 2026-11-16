@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Mapping
@@ -24,11 +25,14 @@ class Page(HTMLParser):
         self.form: str | None = None
         self.text: dict[str, str] = {}
         self.open_elements: list[tuple[str, str | None]] = []
+        self.ancestors: dict[str, tuple[str, ...]] = {}
         self.feed(body.decode())
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
         self.elements.append((tag, attributes))
+        if attributes.get("id"):
+            self.ancestors[str(attributes["id"])] = tuple(tag for tag, _ in self.open_elements)
         if tag not in {"input", "meta", "link", "br", "hr"}:
             self.open_elements.append((tag, attributes.get("id")))
         if tag == "form":
@@ -70,6 +74,7 @@ def render(
     site_url_ready: bool = True,
     csrf: str = "csrf-fixture",
     legacy_operation: str | None = None,
+    activity: bool = False,
 ) -> tuple[Page, bytes, dict[str, str]]:
     from boca_socios.panel import engine_view
 
@@ -89,6 +94,15 @@ def render(
         else members,
         site_url_ready=site_url_ready,
     )
+    if activity:
+        from boca_socios.panel.private_ui import worker_activity
+        from boca_socios.panel.worker_activity import WorkerActivitySnapshot
+
+        body = worker_activity(
+            WorkerActivitySnapshot("2026-11-16T12:00:00Z", "fixed_stages_only", "missing", ()),
+            engine_snapshot=snapshot or {"version": 1, "engines": []},
+            members=members or (),
+        )
     return Page(body), body, operations
 
 
@@ -244,6 +258,7 @@ def test_member_and_snapshot_text_cannot_create_markup_or_expose_extra_secret_fi
 def test_inspection_links_use_only_valid_private_session_identities() -> None:
     session_id = str(uuid4())
     page, body, _ = render(
+        activity=True,
         snapshot={
             "version": 1,
             "engines": [
@@ -272,45 +287,39 @@ def test_inspection_links_use_only_valid_private_session_identities() -> None:
 
 
 @pytest.mark.parametrize("session_count", [0, 2, 50])
-def test_both_engine_controls_precede_all_session_histories(session_count: int) -> None:
+def test_control_stays_short_and_activity_owns_histories(session_count: int) -> None:
     engines = ("queues_tokens", "browsers_members")
     identities = {engine: [str(uuid4()) for _ in range(session_count // 2)] for engine in engines}
-    page, body, _ = render(
-        snapshot={
-            "version": 1,
-            "engines": [
-                {
-                    "engine": engine,
-                    "state": "RUNNING",
-                    "sessions": [
-                        {"session_id": identity, "browser": "chromium"}
-                        for identity in identities[engine]
-                    ],
-                }
-                for engine in engines
-            ],
-        }
-    )
-
-    controls = [
-        body.index(f'id="{engine}-{suffix}"'.encode())
-        for engine in engines
-        for suffix in ("state", "start", "stop")
-    ]
-    histories = [
-        body.index(f'id="{engine}-{suffix}"'.encode())
-        for engine in engines
-        for suffix in ("sessions", "no-sessions")
-    ]
-    assert max(controls) < min(histories)
+    snapshot = {
+        "version": 1,
+        "engines": [
+            {
+                "engine": engine,
+                "state": "RUNNING",
+                "sessions": [
+                    {"session_id": identity, "browser": "chromium"}
+                    for identity in identities[engine]
+                ],
+            }
+            for engine in engines
+        ],
+    }
+    control, control_body, _ = render(snapshot=snapshot)
+    assert len(control.forms) == 4
+    assert all(b'id="' + engine.encode() + b'-sessions"' not in control_body for engine in engines)
+    page, body, _ = render(snapshot=snapshot, activity=True)
+    assert not page.forms
     common_heading = b"<h2>Sesiones observadas</h2>"
     assert body.count(common_heading) == 1
-    assert max(controls) < body.index(common_heading) < min(histories)
     for engine, label in zip(engines, ("colas y tokens", "navegadores de socios"), strict=True):
         heading = f"<h3>Sesiones de {label}</h3>".encode()
         assert body.index(common_heading) < body.index(heading)
         assert body.index(heading) < body.index(f'id="{engine}-sessions"'.encode())
-    rows = [attrs["data-session-id"] for tag, attrs in page.elements if tag == "li"]
+    rows = [
+        attrs["data-session-id"]
+        for tag, attrs in page.elements
+        if tag == "li" and "data-session-id" in attrs
+    ]
     assert rows == [identity for engine in engines for identity in identities[engine]]
     links = [
         attrs["href"]
@@ -319,7 +328,8 @@ def test_both_engine_controls_precede_all_session_histories(session_count: int) 
     ]
     assert links == [f"/control/sesiones/{identity}" for identity in rows]
     assert sum(tag == "h4" for tag, _ in page.elements) == session_count
-    assert len(page.forms) == 4
+    assert b'id="worker-events"' in body
+    assert all(f'id="{engine}-state"'.encode() in body for engine in engines)
 
 
 _OBSERVATION_TEXT_CASES = (
@@ -349,6 +359,7 @@ _OBSERVATION_TEXT_CASES = (
 @pytest.mark.parametrize(("value", "expected"), _OBSERVATION_TEXT_CASES)
 def test_initial_observation_labels_accept_only_recognized_strings(value, expected) -> None:
     _, body, _ = render(
+        activity=True,
         snapshot={
             "version": 1,
             "engines": [
@@ -364,7 +375,7 @@ def test_initial_observation_labels_accept_only_recognized_strings(value, expect
                     ],
                 }
             ],
-        }
+        },
     )
 
     for field in ("outcome", "queue_state"):
@@ -409,6 +420,7 @@ def test_old_fixture_without_legacy_operation_has_only_four_engine_forms():
 
 def test_received_queue_size_and_service_estimate_are_present_without_computation():
     _, body, _ = render(
+        activity=True,
         snapshot={
             "version": 1,
             "engines": [
@@ -424,7 +436,7 @@ def test_received_queue_size_and_service_estimate_are_present_without_computatio
                     ],
                 }
             ],
-        }
+        },
     )
     assert b'data-field="queue_size">2034</dd>' in body
     assert (
@@ -433,11 +445,17 @@ def test_received_queue_size_and_service_estimate_are_present_without_computatio
     )
 
 
-def _run_poll_script(snapshots, *, present=True, session_id=None):
+def _run_poll_script(snapshots, *, present=True, session_id=None, mode="combined"):
     from boca_socios.panel import engine_view
 
     node = shutil.which("node")
     assert node is not None
+    identifiers = None
+    script = engine_view._SCRIPT
+    if mode != "combined":
+        parsed, rendered, _ = render(snapshot=snapshots[0], activity=mode == "activity")
+        identifiers = [attrs["id"] for _, attrs in parsed.elements if "id" in attrs]
+        script = "\n".join(re.findall(r"<script>(.*?)</script>", rendered.decode(), re.S))
     harness = r"""
 const vm = require('node:vm');
 const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
@@ -448,6 +466,8 @@ function element(id) {
   if (!elements.has(id)) elements.set(id, {
     textContent: '', hidden: true, disabled: true, children: [],
     dataset: {ready: 'true'}, fields: new Map(),
+    replaceChildren(...children) { this.children = children; },
+    setAttribute(name, value) { this[name] = value; },
     addEventListener(name, callback) { this[name] = callback; },
     get elements() { return {namedItem: name => {
       if (!this.fields.has(name)) this.fields.set(name, {value: 'original-' + name,
@@ -477,16 +497,26 @@ member.value = 'owner-member-selection';
 const sessionLink = row ? row.querySelector('[data-field="inspect"]') : null;
 if (sessionLink) sessionLink.href = '/control/sesiones/' + input.session_id;
 const requests = [];
+const intervals = [];
 let clipboard = 0;
 let selects = 0;
 const context = {
-  document: {hidden: true, activeElement: count, getElementById: element, addEventListener() {},
-    createElement() { throw new Error('existing row replaced'); }},
+  document: {hidden: true, activeElement: count, getElementById(id) {
+    if (input.identifiers && !input.identifiers.includes(id)) return null;
+    return element(id);
+  }, addEventListener() {},
+    createElement(tag) {
+      if (input.mode === 'activity' && tag === 'li') return {textContent: ''};
+      throw new Error('existing row replaced');
+    }},
   navigator: {clipboard: {writeText() { clipboard++; }}},
   select() { selects++; },
-  setInterval() {}, URL,
+  setInterval(callback, ms) { intervals.push(ms); }, URL,
   fetch: async (url, options) => {
     requests.push({url, options});
+    if (url === '/control/actividad.json') return {ok: true, json: async () => ({
+      events: [{at: '2026-11-15T15:00:00Z', source: 'host', message: 'Acuse no verificado'}],
+      observed_at: '2026-11-15T16:00:00Z', chromium_telemetry: 'degraded'})};
     if (snapshot === 'network-error') throw new Error('offline fixture');
     return {ok: true, json: async () => snapshot};
   }
@@ -499,7 +529,13 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
     const section = element('legacy-worker-recovery');
     const result = {recovery: section ? {hidden: section.hidden,
       disabled: element('legacy-worker-recovery-button').disabled} : null,
-      status: element('engines-live').textContent};
+      status: element('engines-live').textContent,
+      state: element('queues_tokens-state').textContent,
+      checked: element('engines-checked').textContent,
+      updated: element('queues_tokens-updated').textContent,
+      currentMember: element('browsers_members-current-member').textContent,
+      startDisabled: element('queues_tokens-start-button').disabled,
+      startReason: element('queues_tokens-start-reason').textContent};
     if (row) for (const field of ['outcome', 'queue_state', 'phase', 'event_state', 'event_id',
       'reason', 'configured_url', 'navigation_attempt', 'display_url', 'inspect',
       'queue_opening_at', 'countdown', 'expected_service_time']) {
@@ -508,7 +544,8 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
     results.push(result);
   }
   process.stdout.write(JSON.stringify({results, operation: operation.value,
-    status: element('engines-live').textContent, requests, clipboard, selects,
+    status: element('engines-live').textContent, requests, clipboard, selects, intervals,
+    timeline: element('worker-activity-status').textContent,
     retained: {row: element('queues_tokens-sessions').children[0] === row,
       form: element('queues_tokens-start') === form,
       engineOperation: form.elements.namedItem('operation_id') === engineOperation,
@@ -521,10 +558,12 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
         [node, "-e", harness],
         input=json.dumps(
             {
-                "script": engine_view._SCRIPT,
+                "script": script,
+                "identifiers": identifiers,
                 "present": present,
                 "session_id": session_id,
                 "snapshots": snapshots,
+                "mode": mode,
             }
         ),
         capture_output=True,
@@ -561,7 +600,7 @@ def test_opening_initial_and_actual_poll_show_same_art_duration_and_no_phase_cha
         "expected_service_time": "ETA unchanged",
     }
     snapshot = _evidence_snapshot(session)
-    _, body, _ = render(snapshot=snapshot)
+    _, body, _ = render(snapshot=snapshot, activity=True)
     assert b"Tiempo estimado hasta la apertura informada" in body
     assert ('data-field="countdown">' + expected + "</dd>").encode() in body
     assert b'data-field="queue_opening_at">2026-11-15 15:05:07 ART</dd>' in body
@@ -730,7 +769,7 @@ def test_event_and_navigation_labels_remain_closed_and_private():
         [_evidence_snapshot(item) for item in sessions], session_id=session_id
     )
     for session, result in zip(sessions, actual["results"], strict=True):
-        page, body, _ = render(snapshot=_evidence_snapshot(session))
+        page, body, _ = render(snapshot=_evidence_snapshot(session), activity=True)
         for field in (
             "event_state",
             "event_id",
@@ -770,7 +809,7 @@ def test_event_and_navigation_labels_remain_closed_and_private():
     assert missing["configured_url"] == "Dato no recibido"
     assert missing["display_url"] == "Dato no recibido"
     assert missing["navigation_attempt"] == "Dato no recibido"
-    _, body, _ = render(snapshot=_evidence_snapshot(base))
+    _, body, _ = render(snapshot=_evidence_snapshot(base), activity=True)
     assert "ID de evento observado en la página".encode() in body
     assert "Última URL final recibida".encode() in body
     assert (
@@ -795,7 +834,7 @@ def test_actual_poll_relabels_received_tokens_without_replacing_controls():
     for snapshot, result, (_, _, label) in zip(snapshots, actual["results"], cases, strict=True):
         assert result["status"] == "Estados y sesiones actualizados."
         assert result["inspect"] == label
-        _, body, _ = render(snapshot=snapshot)
+        _, body, _ = render(snapshot=snapshot, activity=True)
         assert f'href="/control/sesiones/{session_id}">{label}</a>'.encode() in body
     assert actual["retained"] == {
         "row": True,
@@ -825,7 +864,8 @@ def test_event_identifier_requires_the_same_whole_value_in_initial_and_poll_rend
         expected = value if value == "a" * 128 else "Dato no recibido"
         assert actual["event_id"] == expected
         _, body, _ = render(
-            snapshot=_evidence_snapshot({"session_id": session_id, "event_id": value})
+            activity=True,
+            snapshot=_evidence_snapshot({"session_id": session_id, "event_id": value}),
         )
         assert f'data-field="event_id">{expected}</dd>'.encode() in body
 
@@ -871,11 +911,92 @@ def test_navigation_purpose_and_result_labels_are_shared_without_claiming_succes
     )
     for session, received, label in zip(sessions, actual["results"], expected, strict=True):
         assert received["navigation_attempt"] == label
-        page, body, _ = render(snapshot=_evidence_snapshot(session))
+        page, body, _ = render(snapshot=_evidence_snapshot(session), activity=True)
         assert f'data-field="navigation_attempt">{escape(label)}</dd>'.encode() in body
         assert not any(tag == "path" for tag, _ in page.elements)
     snapshot = _evidence_snapshot({"session_id": session_id, "has_auth": True})
     snapshot["engines"][0]["engine"] = "browsers_members"
-    _, body, _ = render(snapshot=snapshot)
+    _, body, _ = render(snapshot=snapshot, activity=True)
     assert b"Ver tokens de autenticaci" in body
     assert b"de la sesi" in body and b"1 de navegadores de socios</a>" in body
+
+
+def test_counts_collapse_inside_start_but_required_member_stays_visible():
+    page, _, _ = render()
+    for engine in ("queues_tokens", "browsers_members"):
+        for browser in ("chromium", "firefox", "webkit"):
+            assert "details" in page.ancestors[f"{engine}-{browser}"]
+            assert "form" in page.ancestors[f"{engine}-{browser}"]
+    assert "details" not in page.ancestors["browsers_members-member"]
+    assert "form" in page.ancestors["browsers_members-member"]
+
+
+@pytest.mark.parametrize("mode", ["control", "activity"])
+def test_poll_separate_dom_updates_true_states_and_marks_failure_historical(mode):
+    session_id = str(uuid4())
+    snapshot = _evidence_snapshot({"session_id": session_id, "phase": "UNKNOWN"})
+    snapshot["engines"][0].update(updated_at="2026-11-15T15:00:00Z", can_start=False)
+    actual = _run_poll_script(
+        [snapshot, "network-error", snapshot], mode=mode, session_id=session_id
+    )
+    first, failed, recovered = actual["results"]
+    assert first["status"] == "Estados y sesiones actualizados."
+    assert first["state"] == "En ejecución"
+    assert "13:00:00 ART" in first["checked"]
+    assert "12:00:00 ART" in first["updated"]
+    assert "histórico" in failed["state"] and "no verificado" in failed["state"]
+    assert "históricos" in failed["status"]
+    assert recovered["state"] == "En ejecución"
+    if mode == "control":
+        assert first["startDisabled"] and "no permite" in first["startReason"]
+        assert actual["intervals"] == [5000]
+    else:
+        assert actual["intervals"] == [5000, 5000]
+        assert actual["timeline"] == "Último evento: Acuse no verificado"
+        assert sum(item["url"] == "/control/actividad.json" for item in actual["requests"]) == 1
+    assert actual["retained"]["focus"] and actual["retained"]["count"] == "original-chromium"
+
+
+@pytest.mark.parametrize("mode", ["control", "activity"])
+def test_polled_member_change_without_selector_does_not_claim_missing_directory_entry(mode):
+    snapshots = []
+    for member_id in (str(uuid4()), str(uuid4()), None):
+        snapshot = _evidence_snapshot({})
+        snapshot["engines"][0].update(engine="browsers_members", member_id=member_id, sessions=[])
+        snapshots.append(snapshot)
+    results = _run_poll_script(snapshots, mode=mode)["results"]
+    expected = (
+        "Socio asociado; nombre no disponible en esta vista"
+        if mode == "activity"
+        else "Socio no disponible en la lista actual"
+    )
+    assert [item["currentMember"] for item in results] == [expected, expected, "Sin socio asociado"]
+
+
+@pytest.mark.parametrize(
+    "site_ready,members,can_start", [(False, (), True), (True, (), True), (True, None, False)]
+)
+def test_disabled_controls_explain_site_mirror_credentials_and_activation(
+    site_ready, members, can_start
+):
+    page, _, _ = render(
+        site_url_ready=site_ready,
+        members=members,
+        snapshot={
+            "engines": [{"engine": "queues_tokens", "state": "STOPPED", "can_start": can_start}]
+        },
+    )
+    if not site_ready:
+        assert "SITE_URL" in page.text["queues_tokens-start-reason"]
+        assert "sincronizada" in page.text["queues_tokens-start-reason"]
+    elif not can_start:
+        assert "no permite" in page.text["queues_tokens-start-reason"]
+    if members == ():
+        assert "credencial activa" in page.text["browsers_members-start-reason"]
+    for engine in ("queues_tokens", "browsers_members"):
+        assert "activación" in page.text[f"{engine}-stop-reason"]
+        for action, suffix in (("iniciar", "start"), ("detener", "stop")):
+            assert (
+                page.button(f"/control/motores/{engine}/{action}")["aria-describedby"]
+                == f"{engine}-{suffix}-reason"
+            )
