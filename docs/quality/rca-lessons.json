@@ -784,8 +784,8 @@
       "id": "RCA-530",
       "issue": 530,
       "fix_pr": 530,
-      "root_cause": "Initial diagnosis duplicated installed readers, used a relative helper interpreter and could present a complete frame after remote failure. Its installed closure also exceeded the aggregate source bound; these findings do not prove the historical prepare failure cause.",
-      "prevention": "Use installed readers with metadata witnesses, attest the absolute interpreter and mark uncertain transport incomplete before backend evidence. Preserve reached helper identity. Separate the measured installed aggregate bound from unchanged individual/default limits.",
+      "root_cause": "Initial diagnosis duplicated readers, used a relative helper interpreter and showed complete output after remote failure. Its closure exceeded the aggregate cap; the new selector also left legacy exact-list tests stale. None establishes the historical prepare failure cause.",
+      "prevention": "Reuse installed readers and metadata witnesses, attest the absolute interpreter, label uncertain transport incomplete and retain helper identity. Separate aggregate/individual caps, and update exact legacy selector expectations without removing prior operations or guard assertions.",
       "regression_tests": [
         "tests/test_r309_telegram_prepare_diagnose.py::test_review_d3_public_bytes_use_real_installed_readers",
         "tests/test_r309_telegram_prepare_diagnose.py::test_review_d4_recipient_command_uses_absolute_interpreter_and_rejects_relative",
@@ -793,7 +793,8 @@
         "tests/test_r309_telegram_prepare_diagnose.py::test_d5_two_key_snapshots_never_read_secret_for_extra_or_invalid_metadata",
         "tests/test_r309_telegram_prepare_transport.py::test_d9_actual_result_branch_requires_remote_and_verifier_success",
         "tests/test_r309_telegram_prepare_transport.py::test_d9_memfd_rejects_damaged_installed_coordinates",
-        "tests/test_r309_telegram_prepare_transport.py::test_d9_builder_adenda_accepts_exact_aggregate_and_rejects_one_more"
+        "tests/test_r309_telegram_prepare_transport.py::test_d9_builder_adenda_accepts_exact_aggregate_and_rejects_one_more",
+        "tests/test_telegram_release_lineage_r34.py::test_protected_workflow_keeps_telegram_two_sha_review_before_any_host_transport"
       ]
     }
   ]

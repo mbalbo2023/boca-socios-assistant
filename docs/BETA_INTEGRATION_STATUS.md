@@ -26,7 +26,7 @@ revisión final independiente; ningún autor se cuenta como revisor.
 | Frente | Estado acreditado | Ownership y dependencia |
 |---|---|---|
 | Apertura/countdown R308 | Producto72195d9 y adenda67f932d revisados4/4;235 casos distintos PASS, lint/formato/tipos. Fixture165160 y borde170000/170001 comprobados; dos casos focales PASS. Pendiente CI integrado y despliegue. | Autor R308 terminó; Arquitectura, QA, Operaciones y root aprobaron. Root integra. |
-| Telegram global | Prepare1167 sigue FAILED_STATE_PRESERVED; no PREPARED demostrado. DiagnósticoR309 implementado enbb0b022 y corregido en25ed05e; cuatro GO finales. CI integrado y diagnóstico físico pendientes. Reader público rechaza otro binding y el upgrade no adopta custodia. | AutorR309 terminó y liberó sus diez rutas. Root integra y opera una Action sólo tras gates. Arquitectura/QA/Operaciones/root revisaron independientemente. Estado real precede solución de adopción. |
+| Telegram global | Prepare1167 sigue FAILED_STATE_PRESERVED; no PREPARED demostrado. DiagnósticoR309 corregido en25ed05e y expectativas legacy en35dffc1; cuatro GO finales para ambos deltas. CI final y diagnóstico físico pendientes. Reader público rechaza otro binding y el upgrade no adopta custodia. | AutorR309 terminó y liberó las14 rutas autorizadas, incluidas las cuatro de la adenda test-only. Root integra y opera una Action sólo tras gates. Arquitectura/QA/Operaciones/root revisaron independientemente. Estado real precede solución de adopción. |
 | DOM autenticado | Auth HTTP/nonce/IPC/vault existe; `dom_authentication` sólo UNVERIFIED. Referencias revisadas no prueban continuación frontend ni identidad positiva del socio. | Arquitectura; falta contrato o evidencia privada acreditada, no nuevos selectores supuestos. |
 | Resultado/ganador | Guardas, terminalización offline y outbox existen. Runtime de comandos usa adaptador local, sin vínculo al contexto real observado. | QA/Arquitectura; falta productor de confirmación real, correlación socio/evento/intento y comprobante. |
 | Destino por socio | Propuesta de circuito completo, sin implementación nueva. Reutiliza custodia/passkey y exige identidad durable ajena al SHA del producto. | QA diseña; depende de custodia global verificada, configuración sin envío y adopción explícita. No agregar sólo formularios o referencias sin productor. |
@@ -51,7 +51,16 @@ error remoto, conservando evidencia backend no autoritativa. Los
 son independientes del autor. RED/GREEN causal y selecciones afectadas:
 10PASS,22PASS,1PASS con cinco escenarios y11PASS de integración, con
 solapamientos; no sumarlos como suite única. Ruff/formato/mypy afectados
-limpios. RCA530 retiene siete selectores; la ejecución total la comprobará CI.
+limpios. RCA530 retiene ocho selectores; la ejecución total la comprobará CI.
+
+El primer CI integrado1281/run43778593553 encontró5 expectativas históricas
+de lista desactualizadas, con10010PASS y34subtestsPASS. La adenda test-only
+aprobada4/4 en530/comment6903779092 añade el selector a seis literales de
+cuatro rutas, conservando todas las guardas y operaciones previas. No cambia
+producto, workflow ni ZIP.35dffc1 cerró los cinco selectores afectados con
+5PASS en0.25s y calidad limpia; obtuvo [cuatro GO finales](https://github.com/mbalbo2023/boca-socios-assistant/pull/530#issuecomment-6903836834).
+El nuevo SHA aún debe superar CI antes del merge o la Action protegida;
+el NO_GO histórico1281 permanece registrado como tal.
 
 La captura pública histórica no resuelve el contrato frontend: los dos runs
 capture-25 conservaron hashes/metadata y eliminaron cuerpos HTML/JS. Ambos

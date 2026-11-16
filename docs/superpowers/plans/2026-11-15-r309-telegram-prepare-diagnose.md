@@ -81,13 +81,30 @@ atestado; transporte remoto incierto produce primero INCOMPLETE_NO_GO y
 conserva el frame únicamente como evidencia backend no autoritativa. Tests
 causales RED/GREEN, luego selecciones10/22/1/11PASS con solapamientos.
 No repetir suite86, baseline niR308. Calidad afectada limpia. El registro
-RCA530 conserva siete selectores, pendiente del gate de ejecución en CI.
+RCA530 conserva ocho selectores tras la adenda de CI, pendiente del gate de ejecución.
 
 ZIP final47 entradas,490980B fuente,40833B entrada mayor,135443B comprimidos;
 SHA256 `16ddd612de408141176811ab6f2c7592cd74ea02055760dc6c7ae0e6b9dcfc60`.
 Margen agregado9020B, ninguna ampliación posterior a la adenda aprobada.
 Default se midió antes en40entradas/394660B fuente/117451B ZIP y no cambió.
 El frame medido2521B quedó bajo4096. Son resultados offline, no estado físico.
+
+### Adenda posterior a CI1281 — expectativas históricas exactas
+
+CI1281/run43778593553 sobre el remoto b3ecd499 (árbol idéntico al localb4300cc)
+registró5FAIL,10010PASS y34subtestsPASS. Los cinco fallos son listas esperadas
+anteriores al selector nuevo; no prueban un nuevo defecto runtime. Los cuatro
+revisores aprobaron antes del arreglo la [adenda](https://github.com/mbalbo2023/boca-socios-assistant/pull/530#issuecomment-6903779092):
+seis literales en tests/test_browser_ipc_workflow.py,
+test_lifecycle_mobile_workflow_r28.py, test_protected_ops_workflow_r26.py y
+test_telegram_release_lineage_r34.py. Añadir sólo telegram-prepare-diagnose;
+conservar orden, operaciones anteriores, comparación exacta y demás guardas.
+Autor separado posee esas cuatro rutas adicionales; root docs/RCA/GitHub.
+No modificar workflow/producto ni repetir ZIP/suitesbase.35dffc1 modificó
+exactamente esos seis literales; cinco selectores5PASS en0.25s, Ruff/formato
+y diffcheck limpios. [Cuatro GO finales](https://github.com/mbalbo2023/boca-socios-assistant/pull/530#issuecomment-6903836834)
+cierran la adenda. Nueva CI exacta y merge siguen pendientes; la primera CI
+fallida se conserva como evidencia RED, no se la vuelve a presentar como GREEN.
 
 ## Self review
 
