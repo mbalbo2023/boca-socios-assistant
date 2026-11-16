@@ -392,6 +392,8 @@ def test_navigation_attempt_round_trip_and_legacy_inspection():
     assert b'"configured_url"' in payload and b'"navigation_attempt"' in payload
     assert "example.invalid" not in repr(inspected) + repr(attempt)
     old = json.loads(payload)
+    old.pop("queue_opening_at", None)
+    old.pop("queue_opening_event_id", None)
     del old["configured_url"], old["navigation_attempt"]
     legacy = protocol.SessionInspection.from_payload(json.dumps(old).encode())
     assert legacy.final_url == inspected.final_url
@@ -399,6 +401,110 @@ def test_navigation_attempt_round_trip_and_legacy_inspection():
     ident = identity(protocol)
     reply = protocol.EngineReply(ident, "inspect", "OK", inspected)
     assert protocol.EngineReply.from_payload(reply.to_payload()) == reply
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        True,
+        False,
+        1794744000,
+        1.0,
+        "1794744000",
+        "2026-11-15T12:00:00",
+        "2026-11-15 12:00:00Z",
+        "2026-11-15T12:00:00-00:00",
+        "2026-11-15T12:00:00+03:00",
+        "2026-11-15T12:00:00.1234567Z",
+        "2026-02-29T12:00:00Z",
+        "2026-11-15T24:00:00Z",
+        "2026-11-15T12:00:60Z",
+        "２０２６-11-15T12:00:00Z",
+        "2026-11-15T12:00:00Z\n",
+        "x" * 65,
+        {},
+        [],
+    ],
+)
+def test_opening_parser_rejects_every_noncontract_timestamp(value):
+    protocol, _ = modules()
+    assert hasattr(protocol, "parse_queue_opening_time"), "observed opening parser missing"
+    assert protocol.parse_queue_opening_time(value) is None
+
+
+@pytest.mark.parametrize("suffix", ["Z", "+00:00", ".1Z", ".123456+00:00"])
+def test_opening_codec_round_trip_and_exact_legacy_shapes(suffix):
+    from datetime import UTC, datetime
+
+    protocol, _ = modules()
+    assert hasattr(protocol, "parse_queue_opening_time"), "observed opening parser missing"
+    timestamp = "2026-11-15T12:00:00" + suffix
+    opening = protocol.parse_queue_opening_time(timestamp)
+    assert opening == datetime.fromisoformat(timestamp)
+    assert opening.tzinfo is UTC
+    inspected = protocol.SessionInspection(
+        queue_opening_at=opening,
+        queue_opening_event_id="event-308",
+        observed_at=datetime(2026, 11, 15, 11, tzinfo=UTC),
+        expected_service_time="ETA unchanged",
+    )
+    body = json.loads(inspected.to_payload())
+    body["queue_opening_at"] = timestamp
+    assert protocol.SessionInspection.from_payload(json.dumps(body).encode()) == inspected
+    r301 = {
+        k: v for k, v in body.items() if k not in {"queue_opening_at", "queue_opening_event_id"}
+    }
+    pre_r301 = {k: v for k, v in r301.items() if k not in {"configured_url", "navigation_attempt"}}
+    for legacy in (r301, pre_r301):
+        actual = protocol.SessionInspection.from_payload(json.dumps(legacy).encode())
+        assert actual.queue_opening_at is actual.queue_opening_event_id is None
+        assert actual.expected_service_time == "ETA unchanged"
+    for missing in body:
+        with pytest.raises(SyntheticIPCError):
+            protocol.SessionInspection.from_payload(
+                json.dumps({k: v for k, v in body.items() if k != missing}).encode()
+            )
+    for changes in (
+        {"queue_opening_at": "2026-11-15 12:00:00+00:00"},
+        {"queue_opening_at": "2026-11-15T12:00:00-00:00"},
+        {"queue_opening_at": 1794744000},
+        {"queue_opening_at": None},
+        {"queue_opening_event_id": None},
+        {"queue_opening_event_id": "bad id"},
+        {"observed_at": None},
+        {"extra": None},
+    ):
+        with pytest.raises(SyntheticIPCError):
+            protocol.SessionInspection.from_payload(json.dumps(body | changes).encode())
+    duplicate = json.dumps(body).replace(
+        '"queue_opening_at":', '"queue_opening_at": null, "queue_opening_at":', 1
+    )
+    with pytest.raises(SyntheticIPCError):
+        protocol.SessionInspection.from_payload(duplicate.encode())
+
+
+@pytest.mark.parametrize("bad", ["2026-11-15T12:00:00Z", 1, True, None])
+def test_opening_dataclass_requires_datetime_pair_and_observation(bad):
+    from datetime import UTC, datetime, timedelta, timezone
+
+    protocol, _ = modules()
+    assert "queue_opening_at" in protocol.SessionInspection.__dataclass_fields__
+    for value in (
+        bad,
+        datetime(2026, 11, 15),
+        datetime(2026, 11, 15, tzinfo=timezone(timedelta(hours=1))),
+    ):
+        with pytest.raises(SyntheticIPCError):
+            protocol.SessionInspection(
+                queue_opening_at=value,
+                queue_opening_event_id="event-308",
+                observed_at=datetime(2026, 11, 15, tzinfo=UTC),
+            )
+    with pytest.raises(SyntheticIPCError):
+        protocol.SessionInspection(
+            queue_opening_at=datetime(2026, 11, 15, tzinfo=UTC), queue_opening_event_id="event-308"
+        )
 
 
 @pytest.mark.parametrize(
@@ -491,6 +597,8 @@ def test_inspection_maximum_encoded_payload_remains_bounded():
         auth_response_received=True,
         configured_url=padded_url(512),
         navigation_attempt=attempt,
+        queue_opening_at=datetime(2026, 11, 15, 12, 1, 2, 123456, tzinfo=UTC),
+        queue_opening_event_id="e" * 128,
     )
     payload = inspected.to_payload()
     assert 31000 < len(payload) <= 32768

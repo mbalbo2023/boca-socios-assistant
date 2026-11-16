@@ -170,11 +170,11 @@ def test_protected_workflow_keeps_telegram_two_sha_review_before_any_host_transp
         "      - name: Prove Telegram release ancestry and build installed transaction\n",
         1,
     )[1].split("      - name:", 1)[0]
-    condition = '"$BOCA_OPERATION" = telegram-schema-observe || "$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender'
+    condition = '"$BOCA_OPERATION" = telegram-schema-observe || "$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender || "$BOCA_OPERATION" = telegram-prepare-diagnose'
     assert f"if [[ {condition} ]]; then" in gate
     assert 'test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"' in gate
     assert (
-        "telegram-schema-observe|telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
+        "telegram-schema-observe|telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender|telegram-prepare-diagnose)"
         in gate
     )
     assert "host_same_lease_backend_unverified" not in gate

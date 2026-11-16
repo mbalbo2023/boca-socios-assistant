@@ -2,7 +2,8 @@
 
 import asyncio
 import importlib
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from threading import Event, Lock, Thread
 from types import SimpleNamespace
@@ -72,6 +73,8 @@ class WaitingSession:
             dom_authentication="UNVERIFIED",
             configured_url=None,
             navigation_attempt=None,
+            queue_opening_at=None,
+            queue_opening_event_id=None,
         )
 
     async def close(self):
@@ -104,6 +107,202 @@ def coordinator(tmp_path, *, session_type=WaitingSession):
         receipt_seconds=2,
     )
     return service, db, store, member, sessions, wakes, opened
+
+
+def opening_metadata_fixture():
+    from boca_socios.browser.engine_protocol import EngineIdentity
+    from boca_socios.panel.engine_intents import EngineActivation
+
+    api = importlib.import_module("boca_socios.integration.engine_sessions")
+    now = datetime(2026, 11, 15, 12, tzinfo=UTC)
+    record = EngineActivation(
+        "queues_tokens",
+        str(uuid4()),
+        1,
+        str(uuid4()),
+        str(uuid4()),
+        None,
+        {"chromium": 1, "firefox": 0, "webkit": 0},
+        "RUNNING",
+        now.isoformat(),
+        now.isoformat(),
+    )
+    run = api._Activation(record)
+    identity = EngineIdentity(
+        record.engine, record.activation_id, record.generation, str(uuid4()), "chromium"
+    )
+    observed = parse_queue_page_observation(
+        final_url="https://offline.example.invalid/",
+        queue_model={"eventId": "event-308", "isBeforeOrIdle": True},
+        markers=frozenset(),
+        observed_at=now,
+    )
+    assert "queue_opening_at" in SessionInspection.__dataclass_fields__, "opening contract missing"
+    inspected = SessionInspection(
+        queue_opening_at=now + timedelta(seconds=60.01),
+        queue_opening_event_id="event-308",
+        observed_at=now,
+        context_open=True,
+        expected_service_time="ETA unchanged",
+    )
+    item = api._Session(
+        identity,
+        None,
+        state="ACTIVE",
+        phase="PREQUEUE",
+        created=True,
+        observation=observed,
+        inspection=inspected,
+        observed_at=now,
+    )
+    run.sessions[identity.session_id] = item
+    return api, now, record, run, item
+
+
+@pytest.mark.parametrize(
+    "age,delta,expected",
+    [
+        (0, 60.01, 61),
+        (30, 0.01, 1),
+        (30.000001, 60, None),
+        (-0.000001, 60, None),
+        (0, 0, 0),
+        (0, -0.01, 0),
+        (1, 0.000001, 1),
+    ],
+)
+def test_countdown_uses_only_fresh_sample_and_ceiling(age, delta, expected):
+    api, now, record, run, item = opening_metadata_fixture()
+    sample = now - timedelta(seconds=age)
+    item.observed_at = sample
+    item.observation = replace(item.observation, observed_at=sample)
+    item.inspection = replace(
+        item.inspection, observed_at=sample, queue_opening_at=now + timedelta(seconds=delta)
+    )
+    row = api.EngineSessionCoordinator._session_metadata(item, now=now, record=record, run=run)
+    assert row["countdown"] == expected
+    assert row["queue_opening_at"] == item.inspection.queue_opening_at.isoformat()
+    assert row["expected_service_time"] == "ETA unchanged"
+
+
+@pytest.mark.parametrize(
+    "fence",
+    [
+        "stop",
+        "failed_record",
+        "released",
+        "engine",
+        "activation",
+        "generation",
+        "run_engine",
+        "run_activation",
+        "run_generation",
+        "cancelled",
+        "closing",
+        "scope_closed",
+        "closed",
+        "failed",
+        "context",
+        "event",
+        "sample",
+        "row_sample",
+        "not_prequeue",
+        "not_active",
+        "not_owned",
+    ],
+)
+def test_countdown_retires_on_authority_identity_event_and_sample_drift(fence):
+    api, now, record, run, item = opening_metadata_fixture()
+    if fence in {"stop", "failed_record", "released"}:
+        record = replace(
+            record,
+            **(
+                {"state": "STOP_REQUESTED"}
+                if fence == "stop"
+                else {"state": "FAILED"}
+                if fence == "failed_record"
+                else {"released": True}
+            ),
+        )
+    elif fence in {"engine", "activation", "generation"}:
+        item.identity = replace(
+            item.identity,
+            **(
+                {"engine": "browsers_members"}
+                if fence == "engine"
+                else {"activation_id": str(uuid4())}
+                if fence == "activation"
+                else {"generation": 2}
+            ),
+        )
+    elif fence.startswith("run_"):
+        run.record = replace(
+            run.record,
+            **(
+                {"engine": "browsers_members"}
+                if fence == "run_engine"
+                else {"activation_id": str(uuid4())}
+                if fence == "run_activation"
+                else {"generation": 2}
+            ),
+        )
+    elif fence == "cancelled":
+        run.cancelled.set()
+    elif fence in {"closing", "scope_closed"}:
+        setattr(run, fence, True)
+    elif fence in {"closed", "failed"}:
+        setattr(item, fence, True)
+    elif fence == "context":
+        item.inspection = replace(item.inspection, context_open=False)
+    elif fence == "event":
+        item.observation = replace(item.observation, event_id="other-event")
+    elif fence == "sample":
+        item.inspection = replace(item.inspection, observed_at=now - timedelta(seconds=1))
+    elif fence == "row_sample":
+        item.observed_at = now - timedelta(seconds=1)
+    elif fence == "not_prequeue":
+        item.observation = parse_queue_page_observation(
+            final_url="https://offline.example.invalid/",
+            queue_model={"eventId": "event-308", "ticket": {"progress": 0}},
+            markers=frozenset(),
+            observed_at=now,
+        )
+    elif fence == "not_active":
+        item.state = "CLOSED"
+    elif fence == "not_owned":
+        run.sessions.clear()
+    row = api.EngineSessionCoordinator._session_metadata(item, now=now, record=record, run=run)
+    assert row["countdown"] is None
+    assert row["queue_opening_at"] == item.inspection.queue_opening_at.isoformat()
+
+
+def test_snapshot_uses_one_now_for_every_session_and_its_timestamp(monkeypatch):
+    api, now, record, run, item = opening_metadata_fixture()
+
+    class Clock(datetime):
+        calls = 0
+
+        @classmethod
+        def now(cls, timezone):
+            assert timezone is UTC
+            cls.calls += 1
+            return now + timedelta(seconds=cls.calls - 1)
+
+    monkeypatch.setattr(api, "datetime", Clock)
+    other = replace(item, identity=replace(item.identity, session_id=str(uuid4())))
+    run.sessions[other.identity.session_id] = other
+    store = SimpleNamespace(
+        recover_cold=lambda: None,
+        snapshot=lambda: [record],
+        restartable_engines=lambda: (),
+        legacy_recovery_state=lambda: "NONE",
+    )
+    service = api.EngineSessionCoordinator(store=store, wake=lambda _: None)
+    service._runs[record.activation_id] = run
+    snapshot = service.snapshot()
+    assert Clock.calls == 1
+    assert snapshot["observed_at"] == now.isoformat()
+    assert [row["countdown"] for row in snapshot["engines"][0]["sessions"]] == [61, 61]
 
 
 @pytest.mark.parametrize(

@@ -87,6 +87,7 @@ MAIN = (
     "print('BOCA_TELEGRAM_HOST state=CODE_ONLY_CLOSURE_READY host=untouched sender=OFF')\n"
 ).encode("ascii")
 MAX_SOURCE_BYTES = 450_000
+MAX_INSTALLED_SOURCE_BYTES = 500_000
 MAX_ARCHIVE_BYTES = 300_000
 NETWORK_PROJECTION_NAME = "boca_socios/host_first_deploy.py"
 CLEANUP_PROJECTION_NAME = "boca_socios/host_boca_cleanup.py"
@@ -384,15 +385,16 @@ def build(root: Path, target: Path, *, installed: bool = False) -> str:
             root, INSTALLATION_PROJECTION_NAME, frozenset({"OnDemandInstallation"})
         )
     if sum(map(len, files.values())) > MAX_SOURCE_BYTES:
-        # Reuse the existing AST/bytecode/line-preserving transform; caps stay
-        # unchanged and repository comments remain in the canonical source.
+        # Reuse the existing AST/bytecode/line-preserving transform at the same
+        # threshold; repository comments remain in the canonical source.
         files = {
             name: _compact_comment_tokens(content, filename=name)
             if name.endswith(".py")
             else content
             for name, content in files.items()
         }
-    if not 0 < sum(len(data) for data in files.values()) <= MAX_SOURCE_BYTES:
+    source_bound = MAX_INSTALLED_SOURCE_BYTES if installed else MAX_SOURCE_BYTES
+    if not 0 < sum(len(data) for data in files.values()) <= source_bound:
         raise ValueError("Boca Telegram reviewed source closure exceeds bound")
     if target.is_symlink() or target.exists():
         raise ValueError("Boca Telegram bundle target must be fresh")

@@ -764,6 +764,38 @@
         "tests/test_r307_telegram_incident_continuation.py::test_current_helper_absence_is_complete_without_causality_or_permissions",
         "tests/test_r307_telegram_incident_continuation.py::test_fixed_inspect_templates_and_derived_orders_match_immutable_base"
       ]
+    },
+    {
+      "id": "RCA-529",
+      "issue": 529,
+      "fix_pr": 530,
+      "root_cause": "The monitor always exposed countdown=None and did not carry observed opening time. Adding the real presentation increased the canonical offline fixture to165160 bytes, beyond160000; this is distinct from the historical noncanonical serialization error.",
+      "prevention": "Carry opening outside queue_model.ticket with strict UTC and same-event freshness/identity guards. Retire live values on STOP or polling failure. Measure the canonical fixture and change only its reviewed bound; keep legacy codecs and product limits.",
+      "regression_tests": [
+        "tests/test_automatic_observer.py::test_actual_snapshot_keeps_optional_opening_outside_ticket_and_invalid_flag",
+        "tests/test_automatic_observer.py::test_opening_is_optional_same_sample_prequeue_and_replaced",
+        "tests/test_engine_sessions.py::test_opening_codec_round_trip_and_exact_legacy_shapes",
+        "tests/test_engine_session_coordinator.py::test_countdown_retires_on_authority_identity_event_and_sample_drift",
+        "tests/test_engine_view.py::test_failed_poll_removes_live_countdown_and_recovers_without_focus_or_timer_changes",
+        "tests/test_engine_dashboard_ui_offline.py::test_http_fixture_models_all_native_redirects_and_preserves_poll_document"
+      ]
+    },
+    {
+      "id": "RCA-530",
+      "issue": 530,
+      "fix_pr": 530,
+      "root_cause": "Initial diagnosis duplicated readers, used a relative helper interpreter and showed complete output after remote failure. Its closure exceeded the aggregate cap; the new selector also left legacy exact-list tests stale. None establishes the historical prepare failure cause.",
+      "prevention": "Reuse installed readers and metadata witnesses, attest the absolute interpreter, label uncertain transport incomplete and retain helper identity. Separate aggregate/individual caps, and update exact legacy selector expectations without removing prior operations or guard assertions.",
+      "regression_tests": [
+        "tests/test_r309_telegram_prepare_diagnose.py::test_review_d3_public_bytes_use_real_installed_readers",
+        "tests/test_r309_telegram_prepare_diagnose.py::test_review_d4_recipient_command_uses_absolute_interpreter_and_rejects_relative",
+        "tests/test_r309_telegram_prepare_diagnose.py::test_d2_guard_refuses_before_public_or_helper_effects",
+        "tests/test_r309_telegram_prepare_diagnose.py::test_d5_two_key_snapshots_never_read_secret_for_extra_or_invalid_metadata",
+        "tests/test_r309_telegram_prepare_transport.py::test_d9_actual_result_branch_requires_remote_and_verifier_success",
+        "tests/test_r309_telegram_prepare_transport.py::test_d9_memfd_rejects_damaged_installed_coordinates",
+        "tests/test_r309_telegram_prepare_transport.py::test_d9_builder_adenda_accepts_exact_aggregate_and_rejects_one_more",
+        "tests/test_telegram_release_lineage_r34.py::test_protected_workflow_keeps_telegram_two_sha_review_before_any_host_transport"
+      ]
     }
   ]
 }
