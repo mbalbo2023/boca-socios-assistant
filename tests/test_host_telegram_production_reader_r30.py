@@ -54,6 +54,46 @@ def test_dedicated_reader_supports_existing_telegram_stopped_boundary(
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    [("State.Status", "created"), ("State.Pid", 0)],
+)
+def test_r312_telegram_installed_worker_state_fields_are_exact_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: object
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def docker(*args: str) -> str:
+        calls.append(args)
+        return json.dumps(value)
+
+    monkeypatch.setattr(cleanup, "_docker", docker)
+    assert _Owned().field("container", CONTAINER, field) == value
+    assert calls == [("inspect", "--format", "{{json ." + field + "}}", CONTAINER)]
+    for kind, ident, denied in (
+        ("container", "foreign", field),
+        ("container", CONTAINER, field + ".Other"),
+        ("network", CONTAINER, field),
+    ):
+        with pytest.raises(LifecycleAdapterNoGo):
+            _Owned().field(kind, ident, denied)
+
+    class _ForeignUid(_Owned):
+        @property
+        def uid(self) -> int:
+            return 0
+
+    class _ForeignGid(_Owned):
+        @property
+        def gid(self) -> int:
+            return 0
+
+    for instance in (_ForeignUid(), _ForeignGid()):
+        with pytest.raises(LifecycleAdapterNoGo):
+            instance.field("container", CONTAINER, field)
+    assert calls == [("inspect", "--format", "{{json ." + field + "}}", CONTAINER)]
+
+
+@pytest.mark.parametrize(
     "ports",
     [None, {}, {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}],
 )

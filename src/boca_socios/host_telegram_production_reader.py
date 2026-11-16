@@ -27,6 +27,8 @@ _CONTAINER_FIELDS = frozenset(
         "Config.Env",
         "State.Running",
         "State.Restarting",
+        "State.Status",
+        "State.Pid",
         "State.Health.Status",
         "RestartCount",
         "HostConfig.RestartPolicy",
