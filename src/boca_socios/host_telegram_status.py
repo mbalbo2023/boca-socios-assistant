@@ -50,14 +50,14 @@ def observe(kind, name, maximum, mode):
         descriptors.append(root)
         metadata = os.stat("data", dir_fd=root, follow_symlinks=False)
         before = witness(metadata)
-        if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700
+        if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) not in (0o700, 0o755)
                 or (metadata.st_uid, metadata.st_gid) != (10001, 10001)):
             if witness(os.stat("data", dir_fd=root, follow_symlinks=False)) != before:
                 return empty(kind, "CHANGED")
             result["state"] = "INVALID"
             result["witness"] = hashlib.sha256(canonical([before, None])).hexdigest()
             return result
-        parent = bootstrap._directory(Path("/data"), 10001)
+        parent = os.open("data", flags, dir_fd=root)
         descriptors.append(parent)
         if witness(os.fstat(parent)) != before:
             return empty(kind, "CHANGED")

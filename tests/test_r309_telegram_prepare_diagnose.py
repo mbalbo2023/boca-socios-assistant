@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import builtins
 import errno
 import hashlib
@@ -94,6 +95,8 @@ class ProgramFS:
         self.data.mkdir(parents=True, mode=0o700)
         self.custody.mkdir(parents=True, mode=0o700)
         self.opens = []
+        self.open_details = []
+        self.data_owner = 10001
         self.secret_reads = []
         self.scan_counts = []
         self.open_fault = None
@@ -130,9 +133,9 @@ class ProgramFS:
                 return self.root / value.removeprefix("/")
             return path
 
-        def metadata(value):
+        def metadata(value, owner=10001):
             values = list(value)
-            values[4:6] = [10001, 10001]
+            values[4:6] = [owner, owner]
             return os.stat_result(
                 values,
                 {
@@ -145,6 +148,7 @@ class ProgramFS:
         def opened(path, flags, *args, **kwargs):
             name = os.fsdecode(path)
             self.opens.append(name)
+            self.open_details.append((name, flags, kwargs.get("dir_fd")))
             if self.open_fault is not None:
                 self.open_fault(name, flags)
             descriptor = real_open(mapped(path), flags, *args, **kwargs)
@@ -159,7 +163,8 @@ class ProgramFS:
         def observed(path, *args, **kwargs):
             if self.stat_fault is not None:
                 self.stat_fault(os.fsdecode(path))
-            return metadata(real_stat(mapped(path), *args, **kwargs))
+            owner = self.data_owner if os.fsdecode(path) == "data" else 10001
+            return metadata(real_stat(mapped(path), *args, **kwargs), owner)
 
         def scanned(path):
             original = real_scandir(mapped(path))
@@ -237,15 +242,25 @@ def test_d3_public_program_uses_installed_r_parsers_and_retains_old_history(tmp_
     assert value["admin"]["observed_at"] == "2020-11-15T00:00:00+00:00"
     assert set(fs.opens) <= {"/", "data", PUBLIC, ADMIN, "/data/" + ADMIN}
     assert not fs.secret_reads and b"bot_token" not in raw
-    # These exact unchanged files were compared to the installed R commit before coding.
+    # R845 (845f31abfb1762dff27e6fc3274fcc40507f3f18) originally pinned
+    # panel/telegram_recipient.py whole-file SHA256
+    # d9b11bbd043f2452575e2ae4b97be06d224b6fd8a8683e232dae67f07663edd2.
+    # G2 adds a distinct DATA opener; the installed R845 _document parser's
+    # complete signature/body must remain identical despite this wrapper.
+    source = (ROOT / "src/boca_socios/panel/telegram_recipient.py").read_text()
+    document = next(
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_document"
+    )
+    assert hashlib.sha256(ast.dump(document, include_attributes=False).encode()).hexdigest() == (
+        "b6bb9584152d14bf478a0d880a3c44bb6e171176c7d779b209c2913afd713460"
+    )
+    # The two other original installed readers retain their historical full-file pins.
     for relative, digest in (
         (
             "telegram_bootstrap.py",
             "61e884e05fb05b4b43aa0842a5a36f5b1a1a584ff2f87f64240090b73f444941",
-        ),
-        (
-            "panel/telegram_recipient.py",
-            "d9b11bbd043f2452575e2ae4b97be06d224b6fd8a8683e232dae67f07663edd2",
         ),
         (
             "notify/projection.py",
@@ -383,7 +398,10 @@ def test_d3_d5_invalid_parent_metadata_changes_are_not_stable(tmp_path, monkeypa
     first, _ = execute_program(status, "PUBLIC_OBSERVE_PROGRAM", fs, monkeypatch)
     fs.data.chmod(0o750)
     second, _ = execute_program(status, "PUBLIC_OBSERVE_PROGRAM", fs, monkeypatch)
-    assert first["recipient"]["state"] == second["recipient"]["state"] == "INVALID"
+    # G2 admits 0755 for DATA only: with no leaf this means ABSENT, whereas
+    # 0750 is INVALID; their immutable parent witnesses must differ.
+    assert first["recipient"]["state"] == "ABSENT"
+    assert second["recipient"]["state"] == "INVALID"
     assert first["recipient"]["witness"] != second["recipient"]["witness"]
     fs.custody.chmod(0o755)
     opens = 0
@@ -1157,16 +1175,29 @@ def test_review_d4_recipient_command_uses_absolute_interpreter_and_rejects_relat
         assert value["helper"]["retirement"] == "RETIRED"
 
 
-@pytest.mark.parametrize("fault", ["", "recipient-denied", "admin-io", "parent-denied"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "",
+        "recipient-denied",
+        "admin-io",
+        "parent-denied",
+        "parent-mode",
+        "parent-owner",
+        "parent-drift",
+    ],
+)
 def test_review_d3_public_bytes_use_real_installed_readers(tmp_path, monkeypatch, fault):
-    import ast
-
     from boca_socios import telegram_bootstrap
     from boca_socios.notify import projection
 
     fs = ProgramFS(tmp_path)
     fs.write(PUBLIC, canonical(public_document()))
     fs.write(ADMIN, canonical(admin_document()) + b"\n")
+    if fault == "parent-mode":
+        fs.data.chmod(0o750)
+    if fault == "parent-owner":
+        fs.data_owner = 10002
     calls = []
     readers = {
         telegram_bootstrap._directory.__code__: "_directory",
@@ -1179,6 +1210,8 @@ def test_review_d3_public_bytes_use_real_installed_readers(tmp_path, monkeypatch
             calls.append((readers[frame.f_code], dict(frame.f_locals)))
 
     def fail(name, flags):
+        if fault == "parent-drift" and name == "data":
+            fs.data.chmod(0o750)
         if (
             (fault == "recipient-denied" and name == PUBLIC)
             or (fault == "admin-io" and name == "/data/" + ADMIN)
@@ -1194,17 +1227,28 @@ def test_review_d3_public_bytes_use_real_installed_readers(tmp_path, monkeypatch
     finally:
         sys.setprofile(old_profile)
     names = [name for name, _ in calls]
-    assert names.count("_directory") == 2
+    # G2 opens DATA using image-local root-relative FD+O_NOFOLLOW; it must not
+    # call the custody-only bootstrap._directory. Readers below remain real.
+    assert names.count("_directory") == 0
+    parent_opens = [(flags, fd) for name, flags, fd in fs.open_details if name == "data"]
+    assert len(parent_opens) == (
+        0 if fault in {"parent-mode", "parent-owner"} else 1 if fault == "parent-drift" else 2
+    )
     assert all(
-        locals_["path"] == Path("/data") and locals_["uid"] == 10001
-        for name, locals_ in calls
-        if name == "_directory"
+        flags & (os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        == (os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        and isinstance(fd, int)
+        for flags, fd in parent_opens
     )
     if fault == "parent-denied":
-        assert names == ["_directory", "_directory"]
+        assert names == []
         assert value["recipient"]["state"] == value["admin"]["state"] == "NOT_READ"
+    elif fault in {"parent-mode", "parent-owner", "parent-drift"}:
+        assert names == []
+        assert value["recipient"]["state"] == ("CHANGED" if fault == "parent-drift" else "INVALID")
+        assert value["admin"]["state"] == "INVALID"
     else:
-        assert names == ["_directory", "_read", "_directory", "_read_admin_receipt"]
+        assert names == ["_read", "_read_admin_receipt"]
         recipient = next(locals_ for name, locals_ in calls if name == "_read")
         assert (recipient["name"], recipient["uid"], recipient["maximum"]) == (PUBLIC, 10001, 1024)
         admin = next(locals_ for name, locals_ in calls if name == "_read_admin_receipt")

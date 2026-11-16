@@ -105,7 +105,11 @@ def execute(operation: str, request: dict[str, Any]) -> dict[str, Any]:
             DATA, CUSTODY, coords, request["installation_fingerprint"], verified
         )
     if operation == "archive-stage":
-        from boca_socios.panel.telegram_recipient import FILENAME, _document
+        from boca_socios.panel.telegram_recipient import (
+            FILENAME,
+            _document,
+            _public_data_directory,
+        )
         from boca_socios.telegram_same_lease_stage import archive_stage_storage
 
         if coords is None:
@@ -124,7 +128,7 @@ def execute(operation: str, request: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError("recipient_changed")
         finally:
             os.close(parent)
-        parent = bootstrap._directory(DATA, bootstrap.UID)
+        parent = _public_data_directory(DATA)
         try:
             prepared, installation = _document(
                 bootstrap._read(parent, FILENAME, bootstrap.UID, maximum=1024), coords.target_sha

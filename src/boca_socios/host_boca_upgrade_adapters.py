@@ -27,6 +27,7 @@ _SHA = re.compile(r"[a-f0-9]{40}\Z")
 _HASH = re.compile(r"[a-f0-9]{64}\Z")
 _IPC = "boca-socios_boca_browser_ipc"
 _SITE = "boca-socios_boca_site_config"
+_TELEGRAM = "boca-socios_boca_telegram"
 _EGRESS = "boca-socios_boca_browser_egress"
 _ATTEMPT = "boca.socios.browser-ipc-attempt"
 _VOLUMES = frozenset(
@@ -378,12 +379,20 @@ def _retained_snapshot(
         raise _fail()
     snapshot = io.inventory()
     cleanup._validate_inventory(snapshot)
+    volume_names = {volume.name for volume in snapshot.volumes}
     if (
         {c.ident for c in snapshot.containers} != {s.ident for s in graph.services}
-        or {v.name for v in snapshot.volumes} != _VOLUMES
+        or volume_names not in (_VOLUMES, _VOLUMES | {_TELEGRAM})
         or snapshot.global_image_ids - {image.ident for image in snapshot.images}
     ):
         raise _fail()
+    if _TELEGRAM in volume_names:
+        telegram = next(volume for volume in snapshot.volumes if volume.name == _TELEGRAM)
+        if cleanup._labels(telegram.labels) != {
+            "com.docker.compose.project": cleanup.BOCA_PROJECT,
+            "com.docker.compose.volume": "boca_telegram",
+        }:
+            raise _fail()
     containers = {c.ident: c for c in snapshot.containers}
     images = {image.ident: image for image in snapshot.images}
     for expected in graph.services:

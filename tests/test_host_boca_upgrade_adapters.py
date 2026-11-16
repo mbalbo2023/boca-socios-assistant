@@ -154,6 +154,17 @@ OBSERVER_SOURCE = "9" * 40
 IPC = "boca-socios_boca_browser_ipc"
 SITE = "boca-socios_boca_site_config"
 EGRESS = "boca-socios_boca_browser_egress"
+TELEGRAM = "boca-socios_boca_telegram"
+
+
+def telegram_volume() -> cleanup.Volume:
+    return cleanup.Volume(
+        TELEGRAM,
+        (
+            ("com.docker.compose.project", "boca-socios"),
+            ("com.docker.compose.volume", "boca_telegram"),
+        ),
+    )
 
 
 def witness() -> bytes:
@@ -372,6 +383,113 @@ def test_generic_reobservation_handles_only_the_journal_graph_without_relabeling
     observed = module().observe_retained(stored_seed.resources, io.expected, ATTEMPT, held, io=io)
     assert observed == stored_seed.resources
     assert observed.site_creator_attempt == "43217075287"
+
+
+@pytest.mark.parametrize("four", (False, True))
+def test_reobservation_accepts_only_unmounted_boca_telegram_custody_volume(
+    lease: Any, four: bool
+) -> None:
+    held, stored_seed = lease
+    io = RetainedIO(four=four)
+    io.value = replace(io.value, volumes=(*io.value.volumes, telegram_volume()))
+    assert module().observe_retained(stored_seed.resources, io.expected, ATTEMPT, held, io=io) == (
+        stored_seed.resources
+    )
+    assert all(TELEGRAM not in item.volumes for item in io.value.containers)
+    assert all(network.name != "boca-socios_boca_telegram_egress" for network in io.value.networks)
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        "foreign_volume",
+        "duplicate_volume",
+        "wrong_project",
+        "wrong_role",
+        "extra_label",
+        "controller_mount",
+        "worker_mount",
+        "container_mount_alias",
+        "third_network",
+    ),
+)
+def test_unverified_optional_telegram_volume_never_admitted(lease: Any, change: str) -> None:
+    held, stored_seed = lease
+    io = RetainedIO()
+    volume = telegram_volume()
+    if change == "foreign_volume":
+        volume = replace(volume, name="foreign-socios_boca_telegram")
+    elif change == "wrong_project":
+        volume = replace(
+            volume, labels=(("com.docker.compose.project", "foreign"), volume.labels[1])
+        )
+    elif change == "wrong_role":
+        volume = replace(
+            volume, labels=(volume.labels[0], ("com.docker.compose.volume", "boca_owner"))
+        )
+    elif change == "extra_label":
+        volume = replace(volume, labels=(*volume.labels, ("foreign.label", "value")))
+    io.value = replace(io.value, volumes=(*io.value.volumes, volume))
+    if change == "duplicate_volume":
+        io.value = replace(io.value, volumes=(*io.value.volumes, volume))
+    elif change in ("controller_mount", "worker_mount"):
+        role = "controller" if change == "controller_mount" else "browser-worker"
+        io.mount_values[role] = [
+            *io.mount_values[role],
+            {"Type": "volume", "Name": TELEGRAM, "Destination": "/run/telegram", "RW": False},
+        ]
+    elif change == "container_mount_alias":
+        first = io.value.containers[0]
+        io.value = replace(
+            io.value,
+            containers=(
+                replace(first, volumes=(*first.volumes, TELEGRAM)),
+                *io.value.containers[1:],
+            ),
+        )
+    elif change == "third_network":
+        io.value = replace(
+            io.value,
+            networks=(
+                *io.value.networks,
+                cleanup.Network(
+                    "boca-socios_boca_telegram_egress",
+                    "5" * 64,
+                    (),
+                    (("com.docker.compose.project", "boca-socios"),),
+                ),
+            ),
+        )
+    with pytest.raises(module().EvidenceNoGo):
+        module().observe_retained(stored_seed.resources, io.expected, ATTEMPT, held, io=io)
+
+
+def test_optional_telegram_volume_drift_between_double_reads_is_rejected(lease: Any) -> None:
+    held, stored_seed = lease
+    io = RetainedIO()
+    io.value = replace(io.value, volumes=(*io.value.volumes, telegram_volume()))
+    original_inventory = io.inventory
+    reads = 0
+
+    def drift_after_first_read() -> cleanup.Inventory:
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            io.value = replace(io.value, volumes=io.value.volumes[:-1])
+        return original_inventory()
+
+    io.inventory = drift_after_first_read
+    with pytest.raises(module().EvidenceNoGo):
+        module().observe_retained(stored_seed.resources, io.expected, ATTEMPT, held, io=io)
+
+
+def test_optional_telegram_volume_cannot_bypass_revoked_lease(lease: Any) -> None:
+    held, stored_seed = lease
+    io = RetainedIO()
+    io.value = replace(io.value, volumes=(*io.value.volumes, telegram_volume()))
+    held.active = False
+    with pytest.raises(module().EvidenceNoGo):
+        module().observe_retained(stored_seed.resources, io.expected, ATTEMPT, held, io=io)
 
 
 @pytest.mark.parametrize(
