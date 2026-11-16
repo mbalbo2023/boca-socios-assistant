@@ -388,12 +388,13 @@ def _boundary_check_sample(sample: Any, *, version: int = 2) -> None:
 
 def verify_public_boundary(
     raw: bytes,
+    version: int = 2,
+    /,
     *,
     attempt_id: str,
     source_sha: str,
     workflow_sha: str,
     allow_failure: bool = False,
-    version: int = 2,
 ) -> dict[str, Any]:
     """Strictly typed receipt distinct from the R309 diagnostic and V1 backend."""
     try:
@@ -503,11 +504,11 @@ def _boundary_frame(value: dict[str, Any]) -> bytes:
     )
     verify_public_boundary(
         raw,
+        version,
         attempt_id=value["attempt_id"],
         source_sha=value["source_sha"],
         workflow_sha=value["workflow_source_sha"],
         allow_failure=True,
-        version=version,
     )
     return raw
 

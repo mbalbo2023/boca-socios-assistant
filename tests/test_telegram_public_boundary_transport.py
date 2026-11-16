@@ -359,10 +359,10 @@ def test_r313_historical_v1_is_explicit_only_and_cannot_enter_v2(tmp_path, monke
     assert (
         status.verify_public_boundary(
             raw,
+            1,
             attempt_id=RUN,
             source_sha=SOURCE,
             workflow_sha=WORKFLOW,
-            version=1,
             allow_failure=True,
         )
         == old
@@ -376,10 +376,10 @@ def test_r313_historical_v1_is_explicit_only_and_cannot_enter_v2(tmp_path, monke
     with pytest.raises(ValueError):
         status.verify_public_boundary(
             new,
+            1,
             attempt_id=RUN,
             source_sha=SOURCE,
             workflow_sha=WORKFLOW,
-            version=1,
             allow_failure=True,
         )
 
@@ -390,10 +390,10 @@ def test_r313_version_parameter_is_exact_int_one_or_two(tmp_path, monkeypatch, i
     with pytest.raises(ValueError):
         status.verify_public_boundary(
             raw,
+            invalid,
             attempt_id=RUN,
             source_sha=SOURCE,
             workflow_sha=WORKFLOW,
-            version=invalid,
             allow_failure=True,
         )
 
