@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 PUBLIC_OBSERVE_PROGRAM = r"""
 import errno, hashlib, json, os, re, stat, sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
@@ -42,21 +43,23 @@ def observe(kind, name, maximum, mode):
     try:
         if (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) != (10001,) * 4:
             return result
+        from boca_socios import telegram_bootstrap as bootstrap
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
         root = os.open("/", flags)
         descriptors.append(root)
-        parent = os.open("data", flags, dir_fd=root)
-        descriptors.append(parent)
-        metadata = os.fstat(parent)
+        metadata = os.stat("data", dir_fd=root, follow_symlinks=False)
         before = witness(metadata)
         if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700
                 or (metadata.st_uid, metadata.st_gid) != (10001, 10001)):
-            if (witness(os.fstat(parent)) != before
-                    or witness(os.stat("data", dir_fd=root, follow_symlinks=False)) != before):
+            if witness(os.stat("data", dir_fd=root, follow_symlinks=False)) != before:
                 return empty(kind, "CHANGED")
             result["state"] = "INVALID"
             result["witness"] = hashlib.sha256(canonical([before, None])).hexdigest()
             return result
+        parent = bootstrap._directory(Path("/data"), 10001)
+        descriptors.append(parent)
+        if witness(os.fstat(parent)) != before:
+            return empty(kind, "CHANGED")
         try:
             metadata = os.stat(name, dir_fd=parent, follow_symlinks=False)
         except FileNotFoundError:
@@ -68,40 +71,38 @@ def observe(kind, name, maximum, mode):
                     or metadata.st_nlink != 1 or not 0 < metadata.st_size <= maximum):
                 result["state"] = "INVALID"
             else:
-                descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
-                                     dir_fd=parent)
-                descriptors.append(descriptor)
-                if witness(os.fstat(descriptor)) != leaf:
-                    result["state"] = "CHANGED"
-                else:
-                    raw = os.read(descriptor, maximum + 1)
-                    if len(raw) != metadata.st_size or witness(os.fstat(descriptor)) != leaf:
-                        result["state"] = "CHANGED"
+                try:
+                    if kind == "recipient":
+                        raw = bootstrap._read(parent, name, 10001, maximum=maximum)
                     else:
-                        try:
-                            from boca_socios import telegram_bootstrap as bootstrap
-                            value = json.loads(raw, object_pairs_hook=bootstrap._unique)
-                            source = value["source_sha"]
-                            if type(source) is not str or re.fullmatch(r"[a-f0-9]{40}", source) is None:
-                                raise ValueError("source")
-                            if kind == "recipient":
-                                from boca_socios.panel.telegram_recipient import _document
-                                recipient, fingerprint = _document(raw, source)
-                                result.update(source_sha=source, installation_fingerprint=fingerprint,
-                                              fingerprint=recipient.fingerprint)
-                            else:
-                                from boca_socios.notify.projection import parse_telegram_admin_receipt
-                                parsed = parse_telegram_admin_receipt(raw, expected_source_sha=source,
-                                                                      now=datetime.now(UTC))
-                                result.update({field: value[field] for field in result
-                                               if field not in ("state", "digest", "witness")})
-                                if parsed.observation_run_id != result["observation_run_id"]:
-                                    raise ValueError("run")
-                            result.update(state="VALID", digest=hashlib.sha256(raw).hexdigest())
-                        except ImportError:
-                            result = empty(kind, "NOT_READ")
-                        except Exception:
-                            result = empty(kind, "INVALID")
+                        from boca_socios.notify.projection import _read_admin_receipt
+                        raw = _read_admin_receipt(Path("/data") / name)
+                except Exception:
+                    result = empty(kind, "NOT_READ")
+                else:
+                    try:
+                        value = json.loads(raw, object_pairs_hook=bootstrap._unique)
+                        source = value["source_sha"]
+                        if type(source) is not str or re.fullmatch(r"[a-f0-9]{40}", source) is None:
+                            raise ValueError("source")
+                        if kind == "recipient":
+                            from boca_socios.panel.telegram_recipient import _document
+                            recipient, fingerprint = _document(raw, source)
+                            result.update(source_sha=source, installation_fingerprint=fingerprint,
+                                          fingerprint=recipient.fingerprint)
+                        else:
+                            from boca_socios.notify.projection import parse_telegram_admin_receipt
+                            parsed = parse_telegram_admin_receipt(raw, expected_source_sha=source,
+                                                                  now=datetime.now(UTC))
+                            result.update({field: value[field] for field in result
+                                           if field not in ("state", "digest", "witness")})
+                            if parsed.observation_run_id != result["observation_run_id"]:
+                                raise ValueError("run")
+                        result.update(state="VALID", digest=hashlib.sha256(raw).hexdigest())
+                    except ImportError:
+                        result = empty(kind, "NOT_READ")
+                    except Exception:
+                        result = empty(kind, "INVALID")
         try:
             after = witness(os.stat(name, dir_fd=parent, follow_symlinks=False))
         except FileNotFoundError:

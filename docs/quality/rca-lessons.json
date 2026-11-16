@@ -779,6 +779,22 @@
         "tests/test_engine_view.py::test_failed_poll_removes_live_countdown_and_recovers_without_focus_or_timer_changes",
         "tests/test_engine_dashboard_ui_offline.py::test_http_fixture_models_all_native_redirects_and_preserves_poll_document"
       ]
+    },
+    {
+      "id": "RCA-530",
+      "issue": 530,
+      "fix_pr": 530,
+      "root_cause": "Initial diagnosis duplicated installed readers, used a relative helper interpreter and could present a complete frame after remote failure. Its installed closure also exceeded the aggregate source bound; these findings do not prove the historical prepare failure cause.",
+      "prevention": "Use installed readers with metadata witnesses, attest the absolute interpreter and mark uncertain transport incomplete before backend evidence. Preserve reached helper identity. Separate the measured installed aggregate bound from unchanged individual/default limits.",
+      "regression_tests": [
+        "tests/test_r309_telegram_prepare_diagnose.py::test_review_d3_public_bytes_use_real_installed_readers",
+        "tests/test_r309_telegram_prepare_diagnose.py::test_review_d4_recipient_command_uses_absolute_interpreter_and_rejects_relative",
+        "tests/test_r309_telegram_prepare_diagnose.py::test_d2_guard_refuses_before_public_or_helper_effects",
+        "tests/test_r309_telegram_prepare_diagnose.py::test_d5_two_key_snapshots_never_read_secret_for_extra_or_invalid_metadata",
+        "tests/test_r309_telegram_prepare_transport.py::test_d9_actual_result_branch_requires_remote_and_verifier_success",
+        "tests/test_r309_telegram_prepare_transport.py::test_d9_memfd_rejects_damaged_installed_coordinates",
+        "tests/test_r309_telegram_prepare_transport.py::test_d9_builder_adenda_accepts_exact_aggregate_and_rejects_one_more"
+      ]
     }
   ]
 }

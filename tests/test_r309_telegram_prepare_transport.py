@@ -175,8 +175,17 @@ def test_d9_actual_admission_accepts_r_distinct_w_and_rejects_extra_inputs(tmp_p
 
 
 def test_d9_actual_result_branch_requires_remote_and_verifier_success(tmp_path, monkeypatch):
-    fixture = Runtime(tmp_path, monkeypatch, volume=False)
-    _, frame = fixture.diagnose()
+    fixture = Runtime(tmp_path, monkeypatch)
+    observed, frame = fixture.diagnose()
+    incomplete = backend._diagnosis_frame(
+        {
+            **observed,
+            "state": "INCOMPLETE_NO_GO",
+            "phase": "POSTFLIGHT",
+            "reason": "GUARD_UNVERIFIED",
+            "recommendation": "PRESERVE_REVIEW",
+        }
+    )
     script = _shell(STEP)
     tail = script[script.index('if [[ "$verification_rc"') :]
     # Starts at the shared verifier outcome; no network or SSH statements enter this test.
@@ -186,6 +195,7 @@ def test_d9_actual_result_branch_requires_remote_and_verifier_success(tmp_path, 
         (7, 0, frame, 1),
         (0, 2, frame, 1),
         (0, 0, b"BOCA_TELEGRAM_HOST {}\n", 1),
+        (0, 0, incomplete, 1),
     ):
         result = _run(
             ["/bin/bash", "-euo", "pipefail", "-c", tail],
@@ -202,6 +212,34 @@ def test_d9_actual_result_branch_requires_remote_and_verifier_success(tmp_path, 
         assert result.returncode == expected
         text = summary.read_text()
         assert "OWNER_ACCEPTANCE" not in text and "PREPARED" not in text
+        if remote:
+            lines = text.splitlines()
+            assert lines[0].startswith(
+                "BOCA_TELEGRAM_PREPARE_DIAGNOSIS state=INCOMPLETE_NO_GO reason=TRANSPORT_UNVERIFIED "
+            )
+            label = "BOCA_TELEGRAM_BACKEND_EVIDENCE_NON_AUTHORITATIVE transport=UNVERIFIED receipt="
+            assert len(lines) == 2 and lines[1].startswith(label)
+            original = lines[1].removeprefix(label).encode() + b"\n"
+            assert original == frame
+            evidence = backend.verify_prepare_diagnosis(
+                original,
+                attempt_id=RUN,
+                source_sha=SOURCE,
+                workflow_sha=WORKFLOW,
+                allow_failure=True,
+            )
+            assert evidence == observed
+            assert evidence["helper"]["id"] == "d" * 64
+            assert evidence["helper"]["retirement"] == "RETIRED"
+            assert not any(line.startswith(backend.DIAGNOSIS_PREFIX.decode()) for line in lines)
+        elif expected == 0:
+            assert frame.decode().rstrip("\n") in text
+            assert "state=OBSERVED_NO_GO" in text and "INCOMPLETE_NO_GO" not in text
+        elif verification:
+            assert "state=INCOMPLETE_NO_GO reason=TRANSPORT_UNVERIFIED" in text
+            assert "OBSERVED_NO_GO" not in text and frame.decode().rstrip("\n") not in text
+        elif data == incomplete:
+            assert incomplete.decode().rstrip("\n") in text and "OBSERVED_NO_GO" not in text
         summary.unlink()
 
 

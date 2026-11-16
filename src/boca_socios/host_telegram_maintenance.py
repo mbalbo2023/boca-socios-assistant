@@ -161,7 +161,7 @@ def _attest(
         else ["python", "-m", "boca_socios.telegram_maintenance", operation]
     )
     if observe:
-        command = ["python", "-I", "-B", "-c", RECIPIENT_OBSERVE_PROGRAM]
+        command = ["/app/.venv/bin/python", "-I", "-B", "-c", RECIPIENT_OBSERVE_PROGRAM]
     expected = {(f"boca-socios_{volume}", target, rw) for volume, target, rw in profile}
     if (
         value["Name"] != "/" + name
@@ -293,7 +293,14 @@ class InstalledMaintenance:
             image, "telegram_maintenance", profile, writable=False, maintenance_name=name
         )
         if observe:
-            argv = (*argv[:-4], "python", "-I", "-B", "-c", RECIPIENT_OBSERVE_PROGRAM)
+            argv = (
+                *argv[:-4],
+                "/app/.venv/bin/python",
+                "-I",
+                "-B",
+                "-c",
+                RECIPIENT_OBSERVE_PROGRAM,
+            )
             effects.update(create_attempted=True, retirement="INDETERMINATE")
         ident = cleanup._docker(*argv[1:]).strip()
         if re.fullmatch(r"[a-f0-9]{64}", ident) is None:

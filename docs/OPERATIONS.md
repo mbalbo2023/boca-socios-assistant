@@ -5,10 +5,16 @@
 [Observación1170](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6899708285)
 terminó COMPLETE/OBSERVED_NO_GO: controller healthy, worker created/PID0,
 helper1167 ausente, motor lógico UNVERIFIED y cero escrituras. No repetirla
-ni inferir causa1167, preparación o permiso de retry. Se diseña una lectura
-específica de clave/recibos bajo la Action actual; su eventual helper RO tiene
-efectos Docker acotados declarados, no publicación ni preparación. Root es
-único operador. [Estado vigente](BETA_INTEGRATION_STATUS.md).
+ni inferir causa1167, preparación o permiso de retry. El diagnósticoR309
+implementado en25ed05e tiene cuatro GO finales. Reutiliza lectores instaladosR
+y un único helper recipientRO con efectos Docker acotados declarados, sin
+publicación ni preparación. R y W permanecen separados. Sólo después de CI
+exacta/main, root despacha telegram-prepare-diagnose con los inputs del
+[plan](superpowers/plans/2026-11-15-r309-telegram-prepare-diagnose.md).
+No release/APPLY adicional para diagnosticar. Transporte incierto queda
+INCOMPLETE_NO_GO incluso si llegó un frame válido. Root es único operador.
+El resultado real y continuación se registran en el [estado vigente](BETA_INTEGRATION_STATUS.md)
+y su checkpoint417; este corte no acredita custodia ni causa histórica.
 
 ## Histórico R307
 

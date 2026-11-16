@@ -4,8 +4,10 @@
 
 El [estado vigente y responsables](docs/BETA_INTEGRATION_STATUS.md) distingue
 la instalación aceptada, la observación1170 concluida y el trabajo nuevo.
-R308 completa la cuenta regresiva desde apertura observada; está en revisión,
-no desplegada. Telegram, DOM autenticado y resultado confirmado conservan
+R308 completa la cuenta regresiva desde apertura observada y R309 permite
+diagnosticar clave/recibos Telegram sin publicarlos. Ambos tienen revisión
+final4/4; el candidato integrado530 aún debe acreditar CI y ejecución física.
+La cuenta regresiva no está desplegada. Telegram, DOM autenticado y resultado confirmado conservan
 pendientes concretos. La prueba integral del titular viene después del cierre
 técnico acreditado; las pruebas offline no sustituyen esa aceptación.
 

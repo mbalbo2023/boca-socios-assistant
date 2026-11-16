@@ -4,8 +4,9 @@
 
 El titular autorizó terminar los pendientes antes de su prueba integral.
 La [matriz de evidencia y ownership](BETA_INTEGRATION_STATUS.md) gobierna
-la entrega: R308 en revisión, Telegram pendiente de diagnóstico específico
-y adopción, contratos DOM/resultado faltantes. Configuración por socio y
+la entrega: R308 y R309 revisados4/4, con CI del candidato integrado y
+diagnóstico Telegram físico pendientes en este corte. La evidencia precede
+preparación/adopción; contratos DOM/resultado siguen faltantes. Configuración por socio y
 capacidad física50 no están acreditadas. No presentar una simulación como
 resultado real ni una implementación local como capacidad instalada.
 

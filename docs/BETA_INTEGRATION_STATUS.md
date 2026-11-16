@@ -11,7 +11,7 @@ revisión final independiente; ningún autor se cuenta como revisor.
 
 - Producto instalado R `845f31abfb1762dff27e6fc3274fcc40507f3f18`, release867,
   APPLY1153 ACCEPTED y cleanup ACCEPT: sin nueva promoción.
-- Main observado `1ab24a696bf473f57cdae1ee1f01af024ce1b8e8`, árbol
+- Base de este candidato `1ab24a696bf473f57cdae1ee1f01af024ce1b8e8`, árbol
   `2573cc46656559693b776f24b02164a7c6d7ced2`, integra PR528. CI1280 y
   Security1093 SUCCESS; la base acreditó9844 tests y34 subtests.
 - Recovery1166 COMPLETE/ACCEPTED e inicializador retirado; no repetir.
@@ -26,19 +26,41 @@ revisión final independiente; ningún autor se cuenta como revisor.
 | Frente | Estado acreditado | Ownership y dependencia |
 |---|---|---|
 | Apertura/countdown R308 | Producto72195d9 y adenda67f932d revisados4/4;235 casos distintos PASS, lint/formato/tipos. Fixture165160 y borde170000/170001 comprobados; dos casos focales PASS. Pendiente CI integrado y despliegue. | Autor R308 terminó; Arquitectura, QA, Operaciones y root aprobaron. Root integra. |
-| Telegram global | Prepare1167 sigue FAILED_STATE_PRESERVED; no PREPARED demostrado. Reader público rechaza un binding diferente y no existe adopción en upgrade. DiagnósticoR309/issue530 aprobado4/4 y en implementación. | AutorR309 posee seis fuentes y dos tests; cuatro revisores independientes. Root opera una Action sólo tras revisión/gates. Estado real precede solución de adopción. |
+| Telegram global | Prepare1167 sigue FAILED_STATE_PRESERVED; no PREPARED demostrado. DiagnósticoR309 implementado enbb0b022 y corregido en25ed05e; cuatro GO finales. CI integrado y diagnóstico físico pendientes. Reader público rechaza otro binding y el upgrade no adopta custodia. | AutorR309 terminó y liberó sus diez rutas. Root integra y opera una Action sólo tras gates. Arquitectura/QA/Operaciones/root revisaron independientemente. Estado real precede solución de adopción. |
 | DOM autenticado | Auth HTTP/nonce/IPC/vault existe; `dom_authentication` sólo UNVERIFIED. Referencias revisadas no prueban continuación frontend ni identidad positiva del socio. | Arquitectura; falta contrato o evidencia privada acreditada, no nuevos selectores supuestos. |
 | Resultado/ganador | Guardas, terminalización offline y outbox existen. Runtime de comandos usa adaptador local, sin vínculo al contexto real observado. | QA/Arquitectura; falta productor de confirmación real, correlación socio/evento/intento y comprobante. |
 | Destino por socio | Propuesta de circuito completo, sin implementación nueva. Reutiliza custodia/passkey y exige identidad durable ajena al SHA del producto. | QA diseña; depende de custodia global verificada, configuración sin envío y adopción explícita. No agregar sólo formularios o referencias sin productor. |
-| Capacidad50 y QA accesible | Límite lógico existente; no medida física de50 contextos reales ni aceptación Samsung/Voice Access en este corte. | Root prepara prueba técnica pertinente; titular realiza aceptación privada al cerrar pendientes. |
+| Capacidad50 y QA accesible | Límite lógico existente; no medida física de50 contextos reales ni aceptación Samsung/Voice Access en este corte. QA definió el ensayo50 real, dos grupos25 y cierre aislado; diseño exacto pendiente, sin nuevo código. | Arquitectura y Operaciones precisan interfaces/perfil; root coordina la medición. Titular realiza aceptación privada al cerrar pendientes. |
 
 R308 conserva ETA, phase, dos motores, límite lógico50, IPC y control de foco;
 la fecha no crea actividad de cola ni confirma apertura. El fallo del fixture
 se debe al crecimiento real del HTML, no al error histórico de serialización
 RCA523. El import IPC aislado pasó; no repetir suites ya acreditadas.
 
-El camino crítico es diagnóstico útil de Telegram → decisión de preparación/
-adopción → candidato integrado con gates exactos → promoción consolidada y
+La adenda D9 de R309 responde a488426 bytes de fuentes instaladas frente a450000.
+Autoriza500000 sólo para el agregado installed; conserva450000 por archivo,
+para default y para el umbral del compactador. ZIP300000 y recursos intactos.
+El delta quedó revisado4/4. ZIP final real47 entradas/490980 bytes fuente/
+135443 bytes comprimidos, entrada mayor40833. SHA256
+`16ddd612de408141176811ab6f2c7592cd74ea02055760dc6c7ae0e6b9dcfc60`.
+
+La revisión inicial deR309 rechazó tres desviaciones;25ed05e las corrigió:
+lectoresR reales, intérprete absoluto y resultado principal incompleto ante
+error remoto, conservando evidencia backend no autoritativa. Los
+[cuatro votos finales](https://github.com/mbalbo2023/boca-socios-assistant/issues/530#issuecomment-6903637928)
+son independientes del autor. RED/GREEN causal y selecciones afectadas:
+10PASS,22PASS,1PASS con cinco escenarios y11PASS de integración, con
+solapamientos; no sumarlos como suite única. Ruff/formato/mypy afectados
+limpios. RCA530 retiene siete selectores; la ejecución total la comprobará CI.
+
+La captura pública histórica no resuelve el contrato frontend: los dos runs
+capture-25 conservaron hashes/metadata y eliminaron cuerpos HTML/JS. Ambos
+render quedaron UNKNOWN y no hubo autenticación ni resultado. La recuperación
+de esta pista está [cerrada y documentada](https://github.com/mbalbo2023/boca-socios-assistant/issues/12#issuecomment-6903198722);
+no repetirla como si existieran archivos primarios descargables.
+
+El camino crítico es candidato530/CI/main exactos → diagnóstico útil de
+Telegram → decisión de preparación/adopción → promoción consolidada y
 comprobaciones pertinentes. DOM/resultado requieren su contrato acreditado
 en paralelo. Un stage global inexistente o inválido requeriría entrada privada
 del titular; aún no se afirma que falte. No enviar mensajes ni activar sender.

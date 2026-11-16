@@ -116,7 +116,13 @@ class ProgramFS:
             if not isinstance(path, (str, bytes, os.PathLike)):
                 return path
             value = os.fsdecode(path)
-            if value == "/" or value == "/data" or value == "/run" or value == "/run/telegram":
+            if (
+                value == "/"
+                or value == "/data"
+                or value.startswith("/data/")
+                or value == "/run"
+                or value == "/run/telegram"
+            ):
                 return self.root / value.removeprefix("/")
             if self.host and (
                 value.startswith("/home/boca-deploy") or value.startswith("/run/user/10001")
@@ -229,7 +235,7 @@ def test_d3_public_program_uses_installed_r_parsers_and_retains_old_history(tmp_
     assert value["recipient"]["fingerprint"] == FINGERPRINT
     assert value["admin"]["observation_run_id"] == "43705000000"
     assert value["admin"]["observed_at"] == "2020-11-15T00:00:00+00:00"
-    assert set(fs.opens) <= {"/", "data", PUBLIC, ADMIN}
+    assert set(fs.opens) <= {"/", "data", PUBLIC, ADMIN, "/data/" + ADMIN}
     assert not fs.secret_reads and b"bot_token" not in raw
     # These exact unchanged files were compared to the installed R commit before coding.
     for relative, digest in (
@@ -408,6 +414,7 @@ class Runtime:
         self.helper = None
         self.public_reads = 0
         self.helper_inspects = 0
+        self.created_commands = []
         self.pipe_override = None
         self.monkeypatch = monkeypatch
         self.home = Path("/home/boca-deploy")
@@ -597,6 +604,7 @@ class Runtime:
             )
             assert "--rm" not in command and "--cap-add" not in command
             image_index = command.index(IMAGE)
+            self.created_commands.append(command[image_index + 1 :])
             self.helper = {
                 "Id": "d" * 64,
                 "Name": "/" + command[command.index("--name") + 1],
@@ -636,6 +644,8 @@ class Runtime:
             }
             if self.fault == "cmd-before":
                 self.helper["Config"]["Cmd"][-1] += "\npass"
+            if self.fault == "relative-interpreter":
+                self.helper["Config"]["Cmd"][0] = "python"
             result = "uncertain" if self.fault == "create-ack" else "d" * 64
         elif command[:3] == ("inspect", "--format", "{{json .}}"):
             assert command[-1] == "d" * 64 and self.helper is not None
@@ -683,7 +693,7 @@ class Runtime:
             assert self.helper is not None
             self.events.append("START_HELPER")
             assert self.helper["Config"]["Cmd"] == [
-                "python",
+                "/app/.venv/bin/python",
                 "-I",
                 "-B",
                 "-c",
@@ -1123,3 +1133,93 @@ def test_d7_absence_needs_metadata_witness_and_d8_invalid_public_blocks_extras(
     assert value["custody"]["entries"] == "EXTRA_ENTRIES_PRESENT"
     assert value["recommendation"] == "PRESERVE_REVIEW"
     assert b"SECRET" not in raw and fixture.fs.secret_reads == []
+
+
+@pytest.mark.parametrize("relative_tamper", [False, True])
+def test_review_d4_recipient_command_uses_absolute_interpreter_and_rejects_relative(
+    tmp_path, monkeypatch, relative_tamper
+):
+    fixture = Runtime(
+        tmp_path, monkeypatch, fault="relative-interpreter" if relative_tamper else ""
+    )
+    value, _ = fixture.diagnose()
+    assert fixture.created_commands == [
+        ("/app/.venv/bin/python", "-I", "-B", "-c", maintenance.RECIPIENT_OBSERVE_PROGRAM)
+    ]
+    if relative_tamper:
+        assert value["state"] == "INCOMPLETE_NO_GO"
+        assert value["helper"]["id"] == "d" * 64
+        assert value["helper"]["start_attempted"] is False
+        assert value["helper"]["retirement"] == "INDETERMINATE"
+        assert fixture.events == ["PUBLIC_A", "CREATE"]
+    else:
+        assert value["state"] == "OBSERVED_NO_GO"
+        assert value["helper"]["retirement"] == "RETIRED"
+
+
+@pytest.mark.parametrize("fault", ["", "recipient-denied", "admin-io", "parent-denied"])
+def test_review_d3_public_bytes_use_real_installed_readers(tmp_path, monkeypatch, fault):
+    import ast
+
+    from boca_socios import telegram_bootstrap
+    from boca_socios.notify import projection
+
+    fs = ProgramFS(tmp_path)
+    fs.write(PUBLIC, canonical(public_document()))
+    fs.write(ADMIN, canonical(admin_document()) + b"\n")
+    calls = []
+    readers = {
+        telegram_bootstrap._directory.__code__: "_directory",
+        telegram_bootstrap._read.__code__: "_read",
+        projection._read_admin_receipt.__code__: "_read_admin_receipt",
+    }
+
+    def track(frame, event, arg):
+        if event == "call" and frame.f_code in readers:
+            calls.append((readers[frame.f_code], dict(frame.f_locals)))
+
+    def fail(name, flags):
+        if (
+            (fault == "recipient-denied" and name == PUBLIC)
+            or (fault == "admin-io" and name == "/data/" + ADMIN)
+            or (fault == "parent-denied" and name == "data")
+        ):
+            raise OSError(errno.EIO if fault == "admin-io" else errno.EACCES, "private I/O details")
+
+    fs.open_fault = fail
+    old_profile = sys.getprofile()
+    try:
+        sys.setprofile(track)
+        value, raw = execute_program(status, "PUBLIC_OBSERVE_PROGRAM", fs, monkeypatch)
+    finally:
+        sys.setprofile(old_profile)
+    names = [name for name, _ in calls]
+    assert names.count("_directory") == 2
+    assert all(
+        locals_["path"] == Path("/data") and locals_["uid"] == 10001
+        for name, locals_ in calls
+        if name == "_directory"
+    )
+    if fault == "parent-denied":
+        assert names == ["_directory", "_directory"]
+        assert value["recipient"]["state"] == value["admin"]["state"] == "NOT_READ"
+    else:
+        assert names == ["_directory", "_read", "_directory", "_read_admin_receipt"]
+        recipient = next(locals_ for name, locals_ in calls if name == "_read")
+        assert (recipient["name"], recipient["uid"], recipient["maximum"]) == (PUBLIC, 10001, 1024)
+        admin = next(locals_ for name, locals_ in calls if name == "_read_admin_receipt")
+        assert admin["path"] == Path("/data") / ADMIN
+        assert value["recipient"]["state"] == (
+            "NOT_READ" if fault == "recipient-denied" else "VALID"
+        )
+        assert value["admin"]["state"] == ("NOT_READ" if fault == "admin-io" else "VALID")
+    assert b"private I/O details" not in raw and not fs.secret_reads
+    # Observe the real function calls; never substitute their validators or their bytes.
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+        and node.func.attr in {"read", "fdopen"}
+        for node in ast.walk(ast.parse(status.PUBLIC_OBSERVE_PROGRAM))
+    )

@@ -6,12 +6,16 @@ El titular pidió terminar los pendientes y luego realizar su prueba integral.
 Root mantiene integración, documentación y cualquier Action como único
 operador; autores separados y cuatro votos previos/finales para cada delta.
 La [matriz vigente](docs/BETA_INTEGRATION_STATUS.md) concentra evidencia y
-ownership. Main observado `1ab24a6` integra PR528; CI1280/Security1093 SUCCESS.
+ownership. Base `1ab24a6` integra PR528; CI1280/Security1093 SUCCESS.
 La observación1170 ya terminó; no repetirla ni recovery1166/APPLY1153.
-R308/issue529 implementa apertura observada con revisión independiente en
-curso; no está instalada. Su adenda medida limita el fixture offline a170000.
-Telegram requiere evidencia de clave/recibos y decisión de adopción antes de
-preparar sobre otro producto. DOM autenticado y resultado real carecen aún
+R308/issue529 y R309/PR530 tienen cuatro revisiones finales GO. La cuenta
+regresiva no está instalada; su fixture offline mide165160, cota170000.
+R309 corrigió lectoresR, intérprete absoluto y transporte incierto antes
+de aprobarse en25ed05e. Su ZIP47/490980B fuente/135443B comprimidos conserva
+la adenda installed500000, individual/default450000 y ZIP300000. Root integra
+un único candidato y exige CI exacta/main antes de una Action diagnóstica.
+Telegram requiere evidencia real de clave/recibos y decisión de adopción
+antes de preparar sobre otro producto. DOM autenticado y resultado real carecen aún
 de contrato acreditado; no inventar éxito ni atribuir procedencia al simulador.
 SIMULATION_ONLY, senderOFF y BLACKBOX intactos; conservar datos/passkeys y
 aislamiento de otros proyectos. No pedir permisos rutinarios ya delegados.

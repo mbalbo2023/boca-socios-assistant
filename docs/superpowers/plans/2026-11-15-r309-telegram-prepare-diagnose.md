@@ -47,26 +47,47 @@ default, umbral del compactador, fuente/entrada individual permanecen450000.
 Separar la guarda individual de memfd. No modificar R307, código de imagen,
 BLACKBOX, MOUNTS, transformaciones ni otros límites históricos.
 
-- [ ] Inspeccionar las interfaces existentes y validar que los parsers instaladosR requeridos existen sin suponer API nueva.
-- [ ] Escribir RED causal de los datos/selector faltantes; mockear sólo I/O externo, no los validadores que se pretende probar.
-- [ ] Implementar D3: programa público fijo, ausencia/invalid/mismatch/not-read/drift, metadata y resultados cerrados.
-- [ ] Implementar D4–D5: recipient-observe con factory recipient, literal exacto atestado, dos snapshots, metadatos, máximas2entradas, lectura privada sólo KEY_ONLY válido.
-- [ ] Implementar D1–D2/D6–D8: contexto fijo, comprobaciones explícitas, un helper, públicoA/B, codec y recomendaciones no ejecutables.
-- [ ] Cablear selector y verificación en CLI/memfd/Action; excluir de todos los pasos legacy. Distinguir remote/verification errors de recibo completo.
-- [ ] Probar fronteras D10 y modos legacy representativos sólo donde el delta toca el contrato.
-- [ ] Medir receipt/frame y ZIP/closure exactos,47entradas, default y installed. Si exceeds450000, detener aumento y enviar medida para adenda; no compactar ajenos.
-- [ ] Adenda D9 aprobada4/4: corregir el rechazo real488426>450000 sólo mediante agregado installed500000; probar500000/500001 y entrada450001 con suma<=500000, preservando default/individual450000 y ZIP300000. Revalidar el test R296 afectado, sin repetir baseline.
-- [ ] Ejecutar focales una vez tras implementación; repetir sólo fallos corregidos. Ruff/formato/mypy afectados; no suite completa local.
-- [ ] Commit de las seis rutas y dos tests; informe con RED/GREEN, medidas, hash, riesgos y límites. No voto independiente del autor.
+- [x] Inspeccionar las interfaces existentes y validar que los parsers instaladosR requeridos existen sin suponer API nueva.
+- [x] Escribir RED causal de los datos/selector faltantes; mockear sólo I/O externo, no los validadores que se pretende probar.
+- [x] Implementar D3: programa público fijo, ausencia/invalid/mismatch/not-read/drift, metadata y resultados cerrados.
+- [x] Implementar D4–D5: recipient-observe con factory recipient, literal exacto atestado, dos snapshots, metadatos, máximas2entradas, lectura privada sólo KEY_ONLY válido.
+- [x] Implementar D1–D2/D6–D8: contexto fijo, comprobaciones explícitas, un helper, públicoA/B, codec y recomendaciones no ejecutables.
+- [x] Cablear selector y verificación en CLI/memfd/Action; excluir de todos los pasos legacy. Distinguir remote/verification errors de recibo completo.
+- [x] Probar fronteras D10 y modos legacy representativos sólo donde el delta toca el contrato.
+- [x] Medir receipt/frame y ZIP/closure exactos,47entradas, default y installed. El exceso medido488426>450000 se detuvo y motivó adenda previa; no compactar ajenos.
+- [x] Adenda D9 aprobada4/4: corregir el rechazo real488426>450000 sólo mediante agregado installed500000; probar500000/500001 y entrada450001 con suma<=500000, preservando default/individual450000 y ZIP300000. Revalidar el test R296 afectado, sin repetir baseline.
+- [x] Ejecutar focales una vez tras implementación; repetir sólo fallos corregidos. Ruff/formato/mypy afectados; no suite completa local.
+- [x] Commit de las siete rutas productivas y tres tests autorizados tras la adenda; informe con RED/GREEN, medidas, hash, riesgos y límites. No voto independiente del autor.
 
 ## Task2 — Revisión, evidencia y diagnóstico (root)
 
-- [ ] Arquitectura, QA, Operaciones y root revisan diff/contrato y resultados, sin repetir suites.
-- [ ] Cualquier adenda de límites o rutas se registra y aprueba antes del cambio correspondiente.
+- [x] Arquitectura, QA, Operaciones y root revisan diff/contrato y resultados, sin repetir suites.
+- [x] Cualquier adenda de límites o rutas se registra y aprueba antes del cambio correspondiente.
 - [ ] Actualizar RCA y documentos vigentes; publicar candidato revisable y gates exactos.
 - [ ] Reconciliar main/PRs e instalado; una única Action con parámetros exactos y recibo real en417.
 - [ ] Decidir continuación específica a partir del resultado; nunca retry, prepare o adopción por inferencia.
-- [ ] Mantener pendientes DOM/resultado y configuración por socio como desarrollo o contrato faltante, sin presentarlos como QA concluido.
+- [x] Mantener pendientes DOM/resultado y configuración por socio como desarrollo o contrato faltante, sin presentarlos como QA concluido.
+
+### Cierre del código antes de integración
+
+bb0b022 implementó diez rutas; la revisión independiente lo rechazó porD3,
+D4 yD7. La necesidad de corregir esos puntos quedó registrada antes del
+nuevo código en530/comment6903460039.25ed05e cambia sólo cinco rutas y
+obtiene [cuatro GO finales](https://github.com/mbalbo2023/boca-socios-assistant/issues/530#issuecomment-6903637928).
+El autor liberó ownership; root posee publicación, CI, merge y Action.
+
+LectoresR reales con testigos de metadata; `/app/.venv/bin/python` creado y
+atestado; transporte remoto incierto produce primero INCOMPLETE_NO_GO y
+conserva el frame únicamente como evidencia backend no autoritativa. Tests
+causales RED/GREEN, luego selecciones10/22/1/11PASS con solapamientos.
+No repetir suite86, baseline niR308. Calidad afectada limpia. El registro
+RCA530 conserva siete selectores, pendiente del gate de ejecución en CI.
+
+ZIP final47 entradas,490980B fuente,40833B entrada mayor,135443B comprimidos;
+SHA256 `16ddd612de408141176811ab6f2c7592cd74ea02055760dc6c7ae0e6b9dcfc60`.
+Margen agregado9020B, ninguna ampliación posterior a la adenda aprobada.
+Default se midió antes en40entradas/394660B fuente/117451B ZIP y no cambió.
+El frame medido2521B quedó bajo4096. Son resultados offline, no estado físico.
 
 ## Self review
 
