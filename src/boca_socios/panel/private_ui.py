@@ -170,11 +170,12 @@ def _page(
         '<nav aria-label="Principal"><a href="/control">Control</a> · '
         '<a href="/control/actividad">Actividad</a> · '
         '<a href="/configuracion">Configuración</a></nav>'
-        '<details><summary>Más secciones</summary><nav aria-label="Secciones secundarias">'
+        '<nav aria-label="Otras funciones">'
+        "<strong>Otras funciones:</strong> "
         '<a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> · '
         '<a href="/telegram">Telegram</a> · <a href="/estado">Estado</a> · '
         '<a href="/avisos">Avisos</a> · <a href="/avisos-oficiales">Eventos oficiales</a> · '
-        '<a href="/monitor/tokens">Monitor de tokens</a></nav></details>'
+        '<a href="/monitor/tokens">Monitor de tokens</a></nav>'
         if private_navigation
         else ""
     )
@@ -199,6 +200,71 @@ def login(challenge: str, credential_id: str) -> bytes:
         body_attributes=attributes,
         script=f"<script>{_LOGIN_SCRIPT}</script>",
         private_navigation=False,
+    )
+
+
+def _guest_page(title: str, content: str) -> bytes:
+    """Owner-independent observer navigation; no control form or private nav."""
+    refresh_path = {
+        "Control": "/control",
+        "Actividad": "/control/actividad",
+        "Configuración": "/configuracion",
+    }[title]
+    return _page(
+        title,
+        '<nav aria-label="Principal"><a href="/control">Control</a> · '
+        '<a href="/control/actividad">Actividad</a> · '
+        '<a href="/configuracion">Configuración</a></nav>'
+        "<p>Diagnóstico de lectura. Para iniciar o detener motores, use la sesión del dueño.</p>"
+        '<p><a href="/ingresar">Ingresar para operar motores y editar configuración</a></p>'
+        f'<p><a href="{refresh_path}">Actualizar estado</a> (consulta GET bajo demanda).</p>'
+        + content,
+        private_navigation=False,
+    )
+
+
+def guest_control(engines: tuple[tuple[str, str, str], ...]) -> bytes:
+    """Render a fixed-field projection, not the engine's private snapshot."""
+    rows = "".join(
+        "<li><strong>"
+        + escape(label)
+        + "</strong>: estado "
+        + escape(state)
+        + "; contextos activos "
+        + escape(active)
+        + "</li>"
+        for label, state, active in engines
+    )
+    return _guest_page(
+        "Control",
+        "<h1>Control</h1>"
+        "<p>Estado lógico registrado del motor; no acredita navegador físico ni evento en curso.</p>"
+        "<ul>" + rows + "</ul>",
+    )
+
+
+def guest_activity(events: tuple[tuple[str, str], ...], *, telemetry: str) -> bytes:
+    """Show already-fixed activity labels, never raw observation records."""
+    rows = "".join(
+        "<li><strong>" + escape(source) + "</strong>: " + escape(message) + "</li>"
+        for source, message in events
+    )
+    if not rows:
+        rows = "<li>No hay observaciones verificadas en este momento.</li>"
+    return _guest_page(
+        "Actividad",
+        "<h1>Actividad</h1>"
+        "<p>Registro histórico de eventos. No demuestra actividad actual del worker.</p>"
+        "<p>Telemetría Chromium: " + escape(telemetry) + "</p><ol>" + rows + "</ol>",
+    )
+
+
+def guest_configuration(configured: bool | None) -> bytes:
+    """The URL setting is private even when its presence may be observed."""
+    state = "SÍ" if configured is True else "NO" if configured is False else "UNKNOWN"
+    return _guest_page(
+        "Configuración",
+        "<h1>Configuración</h1><p>SITE_URL configurada: " + state + "</p>",
     )
 
 

@@ -70,7 +70,11 @@ from boca_socios.panel.telegram_pairing_staging import (
     PairingStageRequest,
     PairingStageUnavailable,
 )
-from boca_socios.panel.worker_activity import WorkerActivityUnavailable, read_worker_activity
+from boca_socios.panel.worker_activity import (
+    WorkerActivityUnavailable,
+    guest_activity_label,
+    read_worker_activity,
+)
 from boca_socios.queue.private_pass_monitor import (
     PrivateAutomaticObservationMonitor,
     PrivateQueuePassMonitor,
@@ -350,6 +354,15 @@ class PrivatePanelApplication:
             return self._login(environ, start)
         session = self._sessions.lookup(environ.get("HTTP_COOKIE", ""))
         if session is None:
+            if method == "GET" and path in (
+                "/",
+                "/control",
+                "/control/actividad",
+                "/configuracion",
+            ):
+                if not self._empty_get(environ):
+                    return _error(start, 400, "Solicitud inválida.")
+                return self._guest_page(path, start)
             return _error(start, 401, "Ingrese con la llave de acceso del dueño.")
         renewed = self._sessions.renew_cookie(environ.get("HTTP_COOKIE", ""), session)
         if renewed is None:
@@ -815,6 +828,86 @@ class PrivatePanelApplication:
         if body is None:
             return _error(start, 404, "Observación privada no disponible.")
         return _response(start, 200, body)
+
+    def _guest_page(self, path: str, start: StartResponse) -> list[bytes]:
+        """Expose only bounded Boca-local diagnostics without a valid owner session."""
+        if path in ("/", "/control"):
+            labels = (
+                ("queues_tokens", "Colas y tokens"),
+                ("browsers_members", "Navegadores y socios"),
+            )
+            rows: dict[str, tuple[str, str]] = {}
+            if self._engine_control is not None:
+                try:
+                    snapshot = self._engine_control.snapshot()
+                    engines = snapshot.get("engines") if isinstance(snapshot, dict) else None
+                    if isinstance(engines, list):
+                        for item in engines:
+                            if not isinstance(item, dict):
+                                continue
+                            engine = item.get("engine")
+                            if engine not in ("queues_tokens", "browsers_members"):
+                                continue
+                            state = item.get("state")
+                            active = item.get("active")
+                            rows[str(engine)] = (
+                                state if state in ("RUNNING", "STOPPED") else "UNKNOWN",
+                                str(active)
+                                if type(active) is int and 0 <= active <= 50
+                                else "UNKNOWN",
+                            )
+                except (OSError, RuntimeError, ValueError, TypeError):
+                    rows = {}
+            content = tuple(
+                (label, *rows.get(engine, ("UNKNOWN", "UNKNOWN"))) for engine, label in labels
+            )
+            return _response(start, 200, private_ui.guest_control(content))
+        if path == "/control/actividad":
+            sources = {
+                "owner": "Dueño",
+                "host": "Ejecutor",
+                "simulation": "Simulación",
+                "chromium": "Chromium",
+            }
+            events: tuple[tuple[str, str], ...] = ()
+            telemetry = "UNKNOWN"
+            try:
+                activity = read_worker_activity(
+                    self._database_path,
+                    observed_at=self._now(),
+                    observation_events=self._automatic_monitor.activity_events()
+                    if self._automatic_monitor
+                    else (),
+                )
+                telemetry = (
+                    activity.chromium_telemetry
+                    if activity.chromium_telemetry in ("available", "missing", "degraded")
+                    else "UNKNOWN"
+                )
+                events = tuple(
+                    (sources[event.source], guest_activity_label(event.message))
+                    for event in activity.events[-12:]
+                    if event.source in sources
+                )
+            except (
+                WorkerActivityUnavailable,
+                OSError,
+                RuntimeError,
+                AttributeError,
+                ValueError,
+                TypeError,
+            ):
+                telemetry = "UNKNOWN"
+            return _response(start, 200, private_ui.guest_activity(events, telemetry=telemetry))
+        if path == "/configuracion":
+            configured: bool | None = None
+            try:
+                url = self._site_url_settings.read()
+                configured = bool(url) if url is None or isinstance(url, str) else None
+            except SiteUrlSettingsUnavailable:
+                configured = None
+            return _response(start, 200, private_ui.guest_configuration(configured))
+        return _error(start, 404, "Ruta no disponible.")
 
     def _engine_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
         from boca_socios.panel import engine_view

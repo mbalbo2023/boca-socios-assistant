@@ -131,7 +131,9 @@ def test_control_aliases_keep_controls_and_three_primary_navigation_links(
     tmp_path, monkeypatch, path
 ):
     app, engines, cookie = panel(tmp_path, monkeypatch)
-    assert _request(app, path)[0] == 401
+    guest_status, _, guest = _request(app, path)
+    assert guest_status == 200
+    assert b"<form" not in guest and b"operation_id" not in guest
     code, _, page = _request(app, path, cookie=cookie)
     assert code == 200
     assert b'action="/control/motores/queues_tokens/iniciar"' in page
@@ -142,10 +144,10 @@ def test_control_aliases_keep_controls_and_three_primary_navigation_links(
         (b"/control/actividad", b"Actividad"),
         (b"/configuracion", "Configuración".encode()),
     ]
-    secondary = re.search(
-        r"<details>\s*<summary>Más secciones</summary>(.*?)</details>".encode(), page, re.S
-    )
+    secondary = re.search(rb'<nav aria-label="Otras funciones">(.*?)</nav>', page, re.S)
     assert secondary is not None
+    assert b"Otras funciones" in secondary.group(1)
+    assert "Más secciones".encode() not in page
     for target in (
         b"/socios",
         b"/comandos",
@@ -155,7 +157,7 @@ def test_control_aliases_keep_controls_and_three_primary_navigation_links(
         b"/avisos-oficiales",
         b"/monitor/tokens",
     ):
-        assert b'href="' + target + b'"' in secondary[1]
+        assert secondary[1].count(b'href="' + target + b'"') == 1
     assert engines.calls == []
 
 
@@ -217,7 +219,10 @@ def test_live_activity_html_keeps_timeline_with_real_engine_coordinator(tmp_path
     )
     cookie = _login(app, key, credential)
     try:
-        assert _request(app, "/control/actividad")[0] == 401
+        guest_status, _, guest = _request(app, "/control/actividad")
+        assert guest_status == 200
+        assert b"/control/actividad.json" not in guest
+        assert b"<form" not in guest
         code, headers, page = _request(app, "/control/actividad", cookie=cookie)
         assert code == 200 and headers["Cache-Control"] == "no-store"
         assert b"Actividad del worker y Chromium" in page
