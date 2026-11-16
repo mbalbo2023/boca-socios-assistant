@@ -1,6 +1,47 @@
 # Binding instructions for every coding agent
 
-## Estado vigente — cierre técnico antes de QA integral
+## Estado vigente G2 — candidato CODE_ONLY, no instalado (2026-11-16 ART)
+
+La continuidad vigente está en [#417, checkpoint canónico](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6922744921)
+y [reconciliación de raíz](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6923058844).
+G0/G1 están cerrados; no repetirlos. Fuente W/main verificada por raíz:
+`55da98df6713d40ebf1455fb328005544043d091`. El único candidato local es
+`feature/417-g2-samsung-ux-consolidated`, base de cierre
+`0296876539b20e9a00eea0daedcc809e538e4765` más el ajuste focal del mensaje
+de socio en polling de Actividad y estos encabezados. Sigue CODE_ONLY:
+sin push, PR, CI nuevo, imagen, Action ni instalación por este cierre.
+
+P1 y G3b A1c se recuperaron exactos, sin reimplementación: SHA256 de diff
+`f0607e6dcd2a37b4c5e024df1dfaf2e84f0e7a9f481ff40efd1b1047bc1613b6`
+(2 archivos) y `39e2a100d12f0000a61ceb26c1a71f5cdde5f802ecb61b922b8480473a487300`
+(7 archivos). No repetir sus suites históricas ni la UX ya acreditada.
+El [diseño congelado](docs/superpowers/specs/2026-11-16-boca-three-page-qa-design.md)
+y [plan](docs/superpowers/plans/2026-11-16-boca-three-page-qa-candidate.md)
+gobiernan tres destinos principales: Control, Actividad y Configuración;
+dos motores lógicos comparten un worker físico. Preservar ACL de lectores,
+POST/CSRF/Origin/one-use, CSP, revelación privada y veracidad de observaciones.
+
+[4GO_PRE_CODE](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6921095928)
+y enmiendas [6921748130](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6921748130)/
+[6921916858](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6921916858)
+están aprobados. 4GO_FINAL, 4GO_INTEGRATION y 4GO_OPERATION siguen pendientes:
+autores no son revisores. Root posee la reconciliación final y G3–G7: PR único,
+CI/security exactos; G3b metadata-only sobre W antes de reemplazarlo bajo GO
+operativo nuevo, siempre engine UNVERIFIED; custodia READ_ONLY sin provisionar
+admin; release dual, pair observe → retained observe → un APPLY/postflight;
+y prueba integral privada Samsung SIMULATION_ONLY. Ningún GO de código
+autoriza operar el host ni certifica actividad de motores o navegación.
+
+La evidencia física heredada es release868/run43811532109,
+APPLY1186/run43813151261 y observe1187/run43814281299 SUCCESS; controller
+HEALTHY y worker Created/PID0 en aquel recibo, sender OFF. No es medición
+actual ni instalación de G2. QA mostró WORKER_RECEIPT_UNVERIFIED, sin causa
+acreditada: no equivale a ausencia de evento, cola o tokens. Detalle y
+ownership en la [matriz vigente](docs/BETA_INTEGRATION_STATUS.md).
+SIMULATION_ONLY, BLACKBOX/datos/passkeys, Porota/PPI y otros recursos intactos;
+sin reservas, navegación del agente, credenciales ni Telegram sender.
+
+## Histórico — cierre técnico antes de QA integral
 
 El titular pidió terminar los pendientes y luego realizar su prueba integral.
 Root mantiene integración, documentación y cualquier Action como único

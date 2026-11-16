@@ -60,7 +60,7 @@ def _capture(module, fixture):
             {
                 "width": width,
                 "height": height,
-                "document_requests": 5,
+                "document_requests": 6,
                 "snapshot_requests": 9,
                 "native_posts": list(module.POST_ORDER),
                 "other_requests": 0,
@@ -98,9 +98,63 @@ def test_fixed_fixture_uses_actual_renderer_and_ignores_runtime_environment(monk
     module.validate_fixture(fixture, SOURCE_SHA)
 
 
+def test_activity_fixture_has_real_readonly_renderer_and_separate_bounded_gets():
+    module = _module()
+    fixture = module.make_fixture(SOURCE_SHA)
+    service = module._FixtureService(fixture)
+    _http_exchange(module, service, _request())
+    for operation in module.POST_ORDER[:2]:
+        body = urlencode(module.expected_post_fields(operation)).encode()
+        assert _http_exchange(
+            module,
+            service,
+            _request(
+                "POST",
+                module.post_url(operation).removeprefix(module.ORIGIN),
+                headers=(
+                    "Origin: " + module.ORIGIN,
+                    "Content-Type: application/x-www-form-urlencoded",
+                    f"Content-Length: {len(body)}",
+                ),
+                body=body,
+            ),
+        ).startswith(b"HTTP/1.0 303 ")
+        _http_exchange(module, service, _request())
+    activity = _http_exchange(module, service, _request(path="/control/actividad"))
+    assert activity.startswith(b"HTTP/1.0 200 ")
+    assert b'id="queues_tokens-sessions"' in activity and b'id="worker-events"' in activity
+    assert b"<form" not in activity
+    assert fixture["activity_document"]["html"].encode() in activity
+    assert service.counters()["activity_documents"] == 1
+    assert service.counters()["documents"] == 3
+    timeline = _http_exchange(module, service, _request(path="/control/actividad.json"))
+    assert timeline.startswith(b"HTTP/1.0 200 ") and b'"events"' in timeline
+    service.advance_poll()
+    snapshot = _http_exchange(module, service, _request(path="/control/motores.json"))
+    assert b'"session_id":"00000000-0000-4000-8000-000000000302"' in snapshot
+    assert service.counters()["activity_documents"] == 1
+    assert len(module._json(fixture)) <= 170_000
+    repeated = _http_exchange(module, service, _request(path="/control/actividad"))
+    assert not repeated.startswith(b"HTTP/1.0 200 ")
+
+
 @pytest.mark.parametrize(
     "change",
-    ["source", "token", "url", "html", "redirect_html", "redirect_phase", "fixture_size", "extra"],
+    [
+        "source",
+        "token",
+        "url",
+        "html",
+        "redirect_html",
+        "redirect_phase",
+        "fixture_size",
+        "extra",
+        "old_schema",
+        "activity_html",
+        "activity_phase",
+        "activity_extra",
+        "activity_missing",
+    ],
 )
 def test_fixture_rejects_source_drift_private_metadata_and_unreviewed_inputs(change):
     module = _module()
@@ -118,8 +172,18 @@ def test_fixture_rejects_source_drift_private_metadata_and_unreviewed_inputs(cha
     elif change == "redirect_phase":
         fixture["redirect_documents"][0]["snapshot_phase"] = 3
     elif change == "fixture_size":
-        fixture["html"] += " " * 20_000
+        fixture["html"] += " " * 60_000
         fixture["html_sha256"] = hashlib.sha256(fixture["html"].encode()).hexdigest()
+    elif change == "old_schema":
+        fixture["schema"] = 2
+    elif change == "activity_html":
+        fixture["activity_document"]["html"] += "<p>unreviewed</p>"
+    elif change == "activity_phase":
+        fixture["activity_document"]["snapshot_phase"] = 3
+    elif change == "activity_extra":
+        fixture["activity_document"]["url"] = "https://other.invalid"
+    elif change == "activity_missing":
+        del fixture["activity_document"]
     else:
         fixture["database"] = "/runtime.sqlite3"
     with pytest.raises(ValueError):
@@ -163,7 +227,7 @@ def test_dom_waits_keep_conditions_when_later_eval_is_blocked():
         and item.func.attr == "wait_for_function"
     ]
     expressions = [ast.literal_eval(call.args[0]) for call in calls]
-    assert len(expressions) == 7
+    assert len(expressions) == 10
     node = shutil.which("node")
     assert node is not None
     harness = r"""
@@ -177,6 +241,7 @@ const results = expressions.map(expression => {
     getElementById(id) {
       if (id === 'engines-checked') return {textContent: ready ? '2020-01-01' : ''};
       if (id === 'engines-live') return {textContent: ready ? 'Actualizado.' : 'Último estado disponible.'};
+      if (id === 'engines-total-active') return {textContent: ready ? expression.match(/=== '([01])'/)[1] : ''};
       if (['queues_tokens-stop-button', 'browsers_members-stop-button'].includes(id))
         return {disabled: ready};
       throw new Error('unexpected fixed DOM lookup');
@@ -473,6 +538,8 @@ def test_http_fixture_models_all_native_redirects_and_preserves_poll_document():
         "snapshots": 1,
         "native_posts": 4,
         "rejected": 0,
+        "activity_documents": 0,
+        "activity_snapshots": 0,
     }
     assert len(module._json(fixture)) <= 170_000
     assert len(fixture["snapshots"]) == 6
@@ -1351,7 +1418,7 @@ def test_capture_rejects_unproven_or_tampered_evidence_before_creating_artifacts
     elif change == "png":
         capture["viewports"][0]["png_base64"] = base64.b64encode(_png(1, 1)).decode()
     elif change == "old_documents":
-        capture["viewports"][0]["document_requests"] = 1
+        capture["viewports"][0]["document_requests"] = 5
     elif change == "old_snapshots":
         capture["viewports"][0]["snapshot_requests"] = 4
     else:

@@ -203,6 +203,17 @@ BINDING_MAIN = (
     "from boca_socios.host_boca_binding_observe import main as binding\n"
     "raise SystemExit(binding(['host',sys.argv[2]]))\n"
 ).encode("ascii")
+PUBLIC_RECIPIENT_METADATA_SOURCES = (
+    *BINDING_SOURCES,
+    "src/boca_socios/host_boca_public_recipient_metadata.py",
+)
+PUBLIC_RECIPIENT_METADATA_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 4 or sys.argv[1] != 'boca-public-recipient-metadata-observe':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_public_recipient_metadata import main\n"
+    "raise SystemExit(main(['host',sys.argv[2],sys.argv[3]]))\n"
+).encode("ascii")
 TELEGRAM_INCIDENT_SOURCES = (
     *BINDING_SOURCES,
     "src/boca_socios/telegram_maintenance_contract.py",
@@ -578,6 +589,7 @@ def build(
     current_retained_observe: bool = False,
     installed_admin: bool = False,
     binding_observe: bool = False,
+    public_recipient_metadata_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
     rootless_mapped_observe: bool = False,
@@ -602,6 +614,7 @@ def build(
                 current_retained_observe,
                 installed_admin,
                 binding_observe,
+                public_recipient_metadata_observe,
                 sqlite_observe,
                 pair_upgrade,
                 rootless_mapped_observe,
@@ -774,6 +787,11 @@ def build(
         sources = SQLITE_OBSERVE_SOURCES
         max_source = SQLITE_OBSERVE_MAX_SOURCE_BYTES
         max_archive = SQLITE_OBSERVE_MAX_ARCHIVE_BYTES
+    elif public_recipient_metadata_observe:
+        files = {"__main__.py": PUBLIC_RECIPIENT_METADATA_MAIN, **HOST_ONLY_INIT}
+        sources = PUBLIC_RECIPIENT_METADATA_SOURCES
+        max_source = BINDING_MAX_SOURCE_BYTES
+        max_archive = BINDING_MAX_ARCHIVE_BYTES
     elif binding_observe:
         files = {"__main__.py": BINDING_MAIN, **HOST_ONLY_INIT}
         sources = BINDING_SOURCES
@@ -968,6 +986,7 @@ def main() -> int:
     variant.add_argument("--current-retained-observe", action="store_true")
     variant.add_argument("--installed-admin", action="store_true")
     variant.add_argument("--binding-observe", action="store_true")
+    variant.add_argument("--public-recipient-metadata-observe", action="store_true")
     variant.add_argument("--telegram-incident-observe", action="store_true")
     variant.add_argument("--telegram-initializer-recover", action="store_true")
     variant.add_argument("--sqlite-observe", action="store_true")
@@ -981,7 +1000,7 @@ def main() -> int:
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, current_retained_observe=args.current_retained_observe, installed_admin=args.installed_admin, binding_observe=args.binding_observe, telegram_incident_observe=args.telegram_incident_observe, telegram_initializer_recover=args.telegram_initializer_recover, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize, precommit_restore=args.precommit_restore)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, current_retained_observe=args.current_retained_observe, installed_admin=args.installed_admin, binding_observe=args.binding_observe, public_recipient_metadata_observe=args.public_recipient_metadata_observe, telegram_incident_observe=args.telegram_incident_observe, telegram_initializer_recover=args.telegram_initializer_recover, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize, precommit_restore=args.precommit_restore)}"
     )
     return 0
 

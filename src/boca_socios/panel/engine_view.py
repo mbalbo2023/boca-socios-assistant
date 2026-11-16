@@ -152,6 +152,7 @@ _LEGACY_RECOVERY = {
     },
 }
 _STYLE = """
+summary { min-height: 52px; padding-block: .5rem; cursor: pointer; box-sizing: border-box; }
 [data-engine] { border: 1px solid #aab4c1; border-radius: .5rem;
   padding: 1rem; margin-block: 1.5rem; }
 .engine-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem 1rem; }
@@ -163,7 +164,7 @@ _STYLE = """
 [data-engine] h2, [data-engine] p { overflow-wrap: anywhere; }
 """
 
-_SCRIPT = (
+_ENGINE_CONSTANTS = (
     ART_TIME_SCRIPT
     + "\nconst engineNames = "
     + json.dumps(_ENGINES, ensure_ascii=False)
@@ -175,14 +176,18 @@ _SCRIPT = (
     + json.dumps(_PHASES, ensure_ascii=False)
     + ";\nconst metricNames = "
     + json.dumps(_METRICS, ensure_ascii=False)
-    + ";\nconst evidenceNames = "
-    + json.dumps(_EVIDENCE_NAMES, ensure_ascii=False)
-    + ";\nconst sessionLabels = "
-    + json.dumps(_SESSION_LABELS, ensure_ascii=False)
     + ";\nconst legacyRecoveryLabels = "
     + json.dumps(_LEGACY_RECOVERY, ensure_ascii=False)
     + ";\n"
-    + """
+)
+_EVIDENCE_CONSTANTS = (
+    "const evidenceNames = "
+    + json.dumps(_EVIDENCE_NAMES, ensure_ascii=False)
+    + ";\nconst sessionLabels = "
+    + json.dumps(_SESSION_LABELS, ensure_ascii=False)
+    + ";\n"
+)
+_POLL_START = """
 (() => {
   const live = document.getElementById('engines-live');
   const checked = document.getElementById('engines-checked');
@@ -223,6 +228,8 @@ _SCRIPT = (
     setText(button, labels.button);
     setText(document.getElementById('legacy-worker-recovery-status'), labels.status);
   }
+"""
+_SESSION_FIELDS_SCRIPT = """
   function evidenceName(field, value) {
     return typeof value === 'string' && Object.hasOwn(evidenceNames[field], value) ?
       evidenceNames[field][value] : 'Dato no recibido o no reconocido';
@@ -285,13 +292,18 @@ _SCRIPT = (
       'Sin respuesta observada';
     return text(item[field]);
   }
+"""
+_EMPTY_ENGINE_SCRIPT = """
   function emptyEngine(engine) {
     return {engine, state: 'STOPPED', activation_id: null, generation: 0,
       requested_contexts: 0, created: 0, active: 0, closed: 0, failed: 0,
       sessions: [], counts: {chromium: 0, firefox: 0, webkit: 0}};
   }
+"""
+_SESSION_ROWS_SCRIPT = """
   function updateSessions(engine, sessions) {
     const list = document.getElementById(engine + '-sessions');
+    if (!list) return;
     const existing = new Map(Array.from(list.children).map(item => [item.dataset.sessionId, item]));
     const retained = new Set();
     sessions.forEach((session, index) => {
@@ -331,6 +343,8 @@ _SCRIPT = (
     for (const [id, row] of existing) { if (!retained.has(id)) row.remove(); }
     document.getElementById(engine + '-no-sessions').hidden = retained.size > 0;
   }
+"""
+_POLL_END = """
   function updateEngine(item) {
     const engine = item.engine;
     setText(document.getElementById(engine + '-state'), state(item.state));
@@ -349,22 +363,35 @@ _SCRIPT = (
     const stop = document.getElementById(engine + '-stop');
     const hasActivation = uuid.test(item.activation_id) &&
       Number.isInteger(item.generation) && item.generation > 0;
-    stop.elements.namedItem('activation_id').value = hasActivation ? item.activation_id : '';
-    stop.elements.namedItem('generation').value = hasActivation ? String(item.generation) : '0';
-    document.getElementById(engine + '-stop-button').disabled =
-      !hasActivation || item.state === 'STOPPED';
+    if (stop) {
+      stop.elements.namedItem('activation_id').value = hasActivation ? item.activation_id : '';
+      stop.elements.namedItem('generation').value = hasActivation ? String(item.generation) : '0';
+      document.getElementById(engine + '-stop-button').disabled =
+        !hasActivation || item.state === 'STOPPED';
+      setText(document.getElementById(engine + '-stop-reason'), !hasActivation ?
+        'No hay una activación identificada para detener.' : item.state === 'STOPPED' ?
+        'La activación figura detenida.' : 'Detiene sólo esta activación lógica.');
+    }
     const start = document.getElementById(engine + '-start-button');
     const canStart = typeof item.can_start === 'boolean' ? item.can_start :
       ['STOPPED', 'FAILED'].includes(item.state);
-    start.disabled = start.dataset.ready !== 'true' || !canStart;
+    if (start) {
+      start.disabled = start.dataset.ready !== 'true' || !canStart;
+      setText(document.getElementById(engine + '-start-reason'),
+        (start.dataset.unavailable || '') + (!canStart ?
+          'El estado observado no permite un nuevo inicio; consulte Actividad.' : '') ||
+        'Disponible según la última consulta; el servidor vuelve a comprobar las condiciones.');
+    }
     if (engine === 'browsers_members') {
       const current = document.getElementById(engine + '-current-member');
       const member = uuid.test(item.member_id) ? item.member_id : '';
-      if (current.dataset.memberId !== member) {
-        const option = Array.from(document.getElementById(engine + '-member').children)
+      if (current && current.dataset.memberId !== member) {
+        const selection = document.getElementById(engine + '-member');
+        const option = Array.from(selection ? selection.children : [])
           .find(candidate => candidate.value === member);
         setText(current, !member ? 'Sin socio asociado' : option ? option.textContent :
-          'Socio no disponible en la lista actual');
+          selection ? 'Socio no disponible en la lista actual' :
+          'Socio asociado; nombre no disponible en esta vista');
         current.dataset.memberId = member;
       }
     }
@@ -410,7 +437,12 @@ _SCRIPT = (
       setText(checked, 'Última consulta: ' + formatPrivateTime(data.observed_at));
     } catch (_) {
       for (const engine of Object.keys(engineNames)) {
+        const state = document.getElementById(engine + '-state');
+        if (state && !state.textContent.includes('histórico')) {
+          setText(state, state.textContent + ' (histórico; estado actual no verificado)');
+        }
         const list = document.getElementById(engine + '-sessions');
+        if (!list) continue;
         for (const row of list.children) {
           setText(row.querySelector('[data-field="countdown"]'), 'Sin fecha de apertura vigente');
         }
@@ -426,18 +458,34 @@ _SCRIPT = (
   if (!document.hidden) refreshEngines();
 })();
 """
+_SCRIPT = (
+    _ENGINE_CONSTANTS
+    + _EVIDENCE_CONSTANTS
+    + _POLL_START
+    + _SESSION_FIELDS_SCRIPT
+    + _EMPTY_ENGINE_SCRIPT
+    + _SESSION_ROWS_SCRIPT
+    + _POLL_END
+)
+_CONTROL_SCRIPT = (
+    _ENGINE_CONSTANTS
+    + _POLL_START
+    + _EMPTY_ENGINE_SCRIPT
+    + "function updateSessions() {}\n"
+    + _POLL_END
 )
 # Each native redirect includes this script; omit indentation in the emitted bytes.
 _SCRIPT = "\n".join(line.strip() for line in _SCRIPT.splitlines())
+_CONTROL_SCRIPT = "\n".join(line.strip() for line in _CONTROL_SCRIPT.splitlines())
 
 
 def csp() -> str:
     """Extend the shared page policy without introducing an import cycle."""
     from boca_socios.panel.private_ui import CSP, _hash
 
-    return CSP.replace("script-src ", f"script-src 'sha256-{_hash(_SCRIPT)}' ").replace(
-        "style-src ", f"style-src 'sha256-{_hash(_STYLE)}' "
-    )
+    return CSP.replace(
+        "script-src ", f"script-src 'sha256-{_hash(_SCRIPT)}' 'sha256-{_hash(_CONTROL_SCRIPT)}' "
+    ).replace("style-src ", f"style-src 'sha256-{_hash(_STYLE)}' ")
 
 
 def _text(value: object, fallback: str = "Sin dato") -> str:
@@ -667,10 +715,24 @@ def _forms(
     name = _ENGINES[engine]
     active_members = tuple(member for member in members if member.credential_active)
     ready = site_url_ready and (engine == "queues_tokens" or bool(active_members))
+    unavailable = ""
+    if not site_url_ready:
+        unavailable += "SITE_URL no está configurada o sincronizada; revise Configuración. "
+    if engine == "browsers_members" and not active_members:
+        unavailable += "Hace falta un socio con credencial activa. "
     can_start = item.get("can_start")
     if type(can_start) is not bool:
         can_start = item.get("state") in {"STOPPED", "FAILED"}
     start_disabled = "" if ready and can_start else " disabled"
+    start_reason = unavailable + (
+        "El estado observado no permite un nuevo inicio; consulte Actividad."
+        if not can_start
+        else ""
+    )
+    start_reason = (
+        start_reason
+        or "Disponible según la última consulta; el servidor vuelve a comprobar las condiciones."
+    )
     fields = "".join(
         f'<label for="{engine}-{browser}">{label} de {name}</label>'
         f'<input id="{engine}-{browser}" name="{browser}" type="number" '
@@ -698,14 +760,25 @@ def _forms(
     generation = item.get("generation")
     can_stop = activation is not None and type(generation) is int and generation > 0
     stop_disabled = "" if can_stop and item.get("state") != "STOPPED" else " disabled"
+    stop_reason = (
+        "No hay una activación identificada para detener."
+        if not can_stop
+        else "La activación figura detenida."
+        if item.get("state") == "STOPPED"
+        else "Detiene sólo esta activación lógica."
+    )
     return (
         f'<form id="{engine}-start" method="post" action="/control/motores/{engine}/iniciar">'
         + _hidden("csrf", csrf)
         + _hidden("operation_id", operations[f"{engine}:start"])
         + f"<fieldset><legend>Configurar el próximo inicio de {name}</legend>"
+        + "<details><summary>Cantidades de navegadores: 15 / 5 / 5 por defecto</summary>"
         + fields
+        + "</details>"
         + member_selection
+        + f'<p id="{engine}-start-reason">{escape(start_reason)}</p>'
         + f'<button id="{engine}-start-button" type="submit" '
+        f'aria-describedby="{engine}-start-reason" data-unavailable="{escape(unavailable, quote=True)}" '
         f'data-ready="{str(ready).lower()}"{start_disabled}>Iniciar motor de {name}</button>'
         "</fieldset></form>"
         f'<form id="{engine}-stop" method="post" action="/control/motores/{engine}/detener">'
@@ -713,7 +786,9 @@ def _forms(
         + _hidden("operation_id", operations[f"{engine}:stop"])
         + _hidden("activation_id", activation or "")
         + _hidden("generation", generation if can_stop else 0)
-        + f'<button id="{engine}-stop-button" type="submit"{stop_disabled}>'
+        + f'<p id="{engine}-stop-reason">{escape(stop_reason)}</p>'
+        + f'<button id="{engine}-stop-button" type="submit" '
+        f'aria-describedby="{engine}-stop-reason"{stop_disabled}>'
         f"Detener motor de {name}</button></form>"
     )
 
@@ -725,6 +800,8 @@ def _section(
     operations: Mapping[str, str],
     members: tuple[MemberView, ...],
     site_url_ready: bool,
+    *,
+    controls: bool = True,
 ) -> str:
     state = escape(_STATES.get(str(item.get("state")), "Estado desconocido"))
     metrics = "".join(
@@ -761,17 +838,20 @@ def _section(
         )
     return (
         f'<section data-engine="{engine}" aria-labelledby="{engine}-heading">'
-        f'<h2 id="{engine}-heading">Motor de {_ENGINES[engine]}</h2>'
+        f'<h2 id="{engine}-heading">Motor {"A" if engine == "queues_tokens" else "B"}: {_ENGINES[engine]}</h2>'
         f'<p>Estado observado: <strong id="{engine}-state">{state}</strong></p>'
         f'<p>Etapa: <span id="{engine}-phase">'
         + escape(_PHASES.get(str(item.get("phase")), _text(item.get("phase"))))
         + "</span><br>"
         f'Última observación: <span id="{engine}-updated">{_time(item.get("updated_at"))}</span></p>'
         + current_member
-        + f'<dl class="engine-metrics">{metrics}<dt>Queue ID distintos observados</dt>'
-        f'<dd id="{engine}-queues">{len(queue_ids)}</dd></dl>'
-        f'<p>Distribución solicitada: <span id="{engine}-counts">{distribution}</span></p>'
-        + _forms(engine, item, csrf, operations, members, site_url_ready)
+        + (
+            _forms(engine, item, csrf, operations, members, site_url_ready)
+            if controls
+            else f'<dl class="engine-metrics">{metrics}<dt>Queue ID distintos observados</dt>'
+            f'<dd id="{engine}-queues">{len(queue_ids)}</dd></dl>'
+            f'<p>Distribución solicitada: <span id="{engine}-counts">{distribution}</span></p>'
+        )
         + "</section>"
     )
 
@@ -787,17 +867,16 @@ def _history(engine: str, item: Mapping[str, object]) -> str:
     )
 
 
-def page(
-    snapshot: Mapping[str, object],
-    csrf: str,
-    operations: Mapping[str, str],
-    members: tuple[MemberView, ...],
-    *,
-    site_url_ready: bool,
-) -> bytes:
-    """Render owner controls; only their authenticated POST routes create effects."""
-    from boca_socios.panel.private_ui import _page
+def _poll_status(snapshot: Mapping[str, object]) -> str:
+    return (
+        '<p id="engines-live" role="status" aria-live="polite">Último estado disponible.</p>'
+        f'<p id="engines-checked">Última consulta: {_time(snapshot.get("observed_at"))}</p>'
+        '<button id="engines-refresh" type="button">Actualizar motores y sesiones</button>'
+    )
 
+
+def activity_content(snapshot: Mapping[str, object], members: tuple[MemberView, ...]) -> str:
+    """Reuse the read-only engine projection, without minting any operation."""
     engines = {name: _engine(snapshot, name) for name in _ENGINES}
     totals = []
     for field, label in _METRICS.items():
@@ -809,20 +888,47 @@ def page(
         )
         totals.append(f'{label}: <span id="engines-total-{field}">{total}</span>')
     content = (
-        "<h1>Control de motores</h1>"
-        "<p>Modo de simulación (SIMULATION_ONLY). No se reservan ni compran entradas reales.</p>"
-        "<p>Cada motor se inicia y se detiene por separado. Detener uno permite que el otro continúe.</p>"
+        "<p>Dos motores lógicos comparten un worker físico. Estos estados no certifican "
+        "por sí solos la salud de Docker. SIMULATION_ONLY; sin reservas reales.</p>"
         '<p>Límite conjunto de solicitudes: <span id="engines-limit">'
         + _number(snapshot.get("context_limit", 50))
         + "</span> contextos. La capacidad efectiva del servidor se comprueba al crearlos.</p>"
-        "<p>Los formularios proponen 25 contextos por motor: 15 Chromium, 5 Firefox y 5 WebKit. "
-        "Puede cambiar las cantidades antes de iniciar.</p>"
         "<p>Solicitudes, contextos creados y Queue ID distintos son medidas diferentes. "
         "Varias sesiones pueden compartir un Queue ID; no demuestran posiciones de cola independientes.</p>"
-        '<p id="engines-live" role="status" aria-live="polite">Último estado disponible.</p>'
-        f'<p id="engines-checked">Última consulta: {_time(snapshot.get("observed_at"))}</p>'
-        '<button id="engines-refresh" type="button">Actualizar motores y sesiones</button>'
-        "<h2>Totales observados</h2><p>" + " · ".join(totals) + "</p>"
+        "<p>Una consulta reciente no es una observación nueva del worker. "
+        "Arranque sin confirmar (WORKER_RECEIPT_UNVERIFIED) no significa ausencia de evento. "
+        "URL configurada no acredita navegación.</p>"
+        + _poll_status(snapshot)
+        + "<h2>Totales observados</h2><p>"
+        + " · ".join(totals)
+        + "</p>"
+    )
+    content += "".join(
+        _section(name, item, "", {}, members, False, controls=False)
+        for name, item in engines.items()
+    )
+    content += "<h2>Sesiones observadas</h2>" + f"<p>{_SAMPLE_NOTICE}</p>"
+    content += "".join(_history(name, item) for name, item in engines.items())
+    return content
+
+
+def page(
+    snapshot: Mapping[str, object],
+    csrf: str,
+    operations: Mapping[str, str],
+    members: tuple[MemberView, ...],
+    *,
+    site_url_ready: bool,
+) -> bytes:
+    """Render short owner controls; only authenticated POST routes create effects."""
+    from boca_socios.panel.private_ui import _page
+
+    engines = {name: _engine(snapshot, name) for name in _ENGINES}
+    content = (
+        "<h1>Control de motores</h1>"
+        "<p>SIMULATION_ONLY. Sin reservas ni compras reales. "
+        "Dos motores lógicos, un worker físico; inicio y detención independientes.</p>"
+        + _poll_status(snapshot)
     )
     if not site_url_ready:
         content += '<p>Configure la URL de destino antes de iniciar. <a href="/configuracion">Abrir configuración</a></p>'
@@ -831,11 +937,11 @@ def page(
         _section(name, item, csrf, operations, members, site_url_ready)
         for name, item in engines.items()
     )
-    content += "<h2>Sesiones observadas</h2>" + f"<p>{_SAMPLE_NOTICE}</p>"
-    content += "".join(_history(name, item) for name, item in engines.items())
     content += (
-        '<p><a href="/monitor/tokens">Abrir monitor privado de tokens</a></p>'
+        '<p><a href="/control/actividad">Ver sesiones, tokens y actividad observada</a></p>'
         "<noscript>La página conserva el estado de la última consulta. "
         "Recargue para consultar cambios; los formularios funcionan sin JavaScript.</noscript>"
     )
-    return _page("Motores", content, script=f"<style>{_STYLE}</style><script>{_SCRIPT}</script>")
+    return _page(
+        "Motores", content, script=f"<style>{_STYLE}</style><script>{_CONTROL_SCRIPT}</script>"
+    )

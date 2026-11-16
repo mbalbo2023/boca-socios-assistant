@@ -1,6 +1,69 @@
 # Estado de integración BETA
 
-## Cierre técnico vigente antes de la prueba integral
+## Estado vigente G2 — candidato CODE_ONLY, no instalado (2026-11-16 ART)
+
+[Checkpoint canónico #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6922744921)
+y [reconciliación de raíz](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6923058844)
+son la continuidad; los cortes inferiores son históricos. G0/G1 cerrados.
+Fuente W/main verificada por raíz: `55da98df6713d40ebf1455fb328005544043d091`;
+PR abiertos: 0 en esa reconciliación. El único candidato local es
+`feature/417-g2-samsung-ux-consolidated`, cierre desde
+`0296876539b20e9a00eea0daedcc809e538e4765` más el fix focal de polling
+de socio en Actividad y estos encabezados. No está publicado ni instalado;
+no hay CI/security nuevos del cierre, release, Action ni lectura física nueva.
+
+### Alcance recuperado y UX consolidada
+
+| Parte | Evidencia y límites |
+| --- | --- |
+| P1 exacto | 2 archivos recuperados; SHA256 de diff `f0607e6dcd2a37b4c5e024df1dfaf2e84f0e7a9f481ff40efd1b1047bc1613b6`; no reescrito ni repetida su suite histórica88/88 |
+| G3b A1c exacto | 7 archivos recuperados; SHA256 de diff `39e2a100d12f0000a61ceb26c1a71f5cdde5f802ecb61b922b8480473a487300`; metadata-only, engine UNVERIFIED; no repetida su suite histórica49/49 |
+| Control | Dos tarjetas de motores lógicos con inicio/parada aislados y motivos; conteos dentro del formulario y socio requerido visible |
+| Actividad | Estados, sesiones, procedencia y actividad redacted recibida; polling existente, histórico/UNKNOWN explícitos; sin afirmar ausencia del socio por carecer de selector |
+| Configuración | SITE_URL y enlaces secundarios existentes, sin almacenamiento ni backend nuevos; ACL limitada de `/monitor/tokens` preservada |
+
+El [diseño](superpowers/specs/2026-11-16-boca-three-page-qa-design.md)
+y [plan G2](superpowers/plans/2026-11-16-boca-three-page-qa-candidate.md)
+no autorizan nuevas preferencias, navegaciones, reservas, custodia o sender.
+Dos motores lógicos no significan dos workers físicos; conteos solicitados no
+son contextos observados ni posiciones de cola. Un refresh no prueba actividad.
+WORKER_RECEIPT_UNVERIFIED no es NO_EVENT ni prueba ausencia de cola/tokens.
+
+### Gates pendientes y ownership
+
+[4GO_PRE_CODE](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6921095928)
+y enmiendas [6921748130](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6921748130)/
+[6921916858](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6921916858)
+están aprobados. 4GO_FINAL, 4GO_INTEGRATION y 4GO_OPERATION no están emitidos.
+Root coordina revisores independientes Root/Arquitectura/QA/Operaciones;
+ningún autor vota sobre su propio cambio. Root posee GitHub, integración,
+documentación final y cualquier operación Boca serializada.
+
+| Gate | Paso pendiente; no ejecución acreditada por este candidato |
+| --- | --- |
+| G2 | Cierre focal y documental CODE_ONLY; revisión final independiente del diff/SHA exactos |
+| G3 | 4GO_INTEGRATION, un PR candidato y CI/security exactos antes de integrar; sin duplicar pruebas/builds históricos |
+| G4 | Nuevo 4GO_OPERATION sobre CID/OCI W antes del observador G3b metadata-only y antes de reemplazar W; doble stat/recibo, engine UNVERIFIED |
+| G5 | Custodia READ_ONLY con evidencia propia; sin provisión automática de admin ni activación/envíos |
+| G6 | Release dual y pair observe → retained observe → un APPLY Boca con postflight/cleanup positivos; fallos requieren STOP/RCA/fix-forward, sin retry ciego |
+| G7 | Prueba integral privada de Tincho en Samsung SIMULATION_ONLY: ACK, SITE_URL, evento/cola, tokens, navegadores y dos STOP independientes; sender OFF |
+
+### Evidencia física heredada, no medición actual
+
+Raíz verificó los recibos históricos [release868/run43811532109](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43811532109),
+[APPLY1186/run43813151261](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43813151261)
+y [observe1187/run43814281299](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43814281299)
+SUCCESS: controller HEALTHY, worker Created/PID0 en esa observación, sender
+OFF. No certificar estado actual, START/STOP posterior, aceptación privada,
+navegación real ni capacidad física50 desde estos recibos. La QA posterior
+mostró WORKER_RECEIPT_UNVERIFIED; su causa física no está acreditada.
+G2 no reemplaza W ni convierte sus pruebas offline en evidencia del droplet.
+
+SIMULATION_ONLY, datos/passkeys y BLACKBOX preservados; Porota/PPI y otros
+recursos fuera de alcance. Todas las operaciones físicas futuras van sólo por
+GitHub Actions Boca con sus gates; ninguna se ejecutó durante este cierre.
+
+## Histórico — cierre técnico antes de la prueba integral
 
 Mandato del titular: terminar lo pendiente antes de su prueba integral. Root
 posee integración, evidencia, documentación y Actions serializadas. Cada

@@ -482,8 +482,6 @@ class PrivatePanelApplication:
             if isinstance(path, str) and re.fullmatch(r"/control/sesiones/[0-9a-f-]{36}", path):
                 return self._engine_session_page(path.rsplit("/", 1)[-1], start, session)
             if path in ("/control/actividad", "/control/actividad.json"):
-                if path == "/control/actividad" and self._engine_control is not None:
-                    return self._engine_page(start, session)
                 try:
                     activity_snapshot = read_worker_activity(
                         self._database_path,
@@ -510,7 +508,22 @@ class PrivatePanelApplication:
                         ),
                         html=False,
                     )
-                return _response(start, 200, private_ui.worker_activity(activity_snapshot))
+                from boca_socios.panel import engine_view
+
+                return _response(
+                    start,
+                    200,
+                    private_ui.worker_activity(
+                        activity_snapshot,
+                        engine_snapshot=self._engine_control.snapshot()
+                        if self._engine_control is not None
+                        else None,
+                        members=self._directory.list_members()
+                        if self._engine_control is not None
+                        else (),
+                    ),
+                    csp=engine_view.csp() if self._engine_control is not None else private_ui.CSP,
+                )
             if path == "/estado":
                 snapshot = read_local_status(self._database_path, observed_at=self._now())
                 data = asdict(snapshot)
@@ -633,7 +646,7 @@ class PrivatePanelApplication:
 
     def _token_monitor_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
         if self._engine_control is not None and "simulation:write" in session.permissions:
-            return self._engine_page(start, session)
+            return self._redirect(start, "/control/actividad")
         queue = (
             self._queue_monitor.list_summaries(at=self._now())
             if self._queue_monitor is not None

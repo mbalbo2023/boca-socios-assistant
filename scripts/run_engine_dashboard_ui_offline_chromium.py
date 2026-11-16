@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 ORIGIN = "http://localhost:8443"
 PAGE_URL = ORIGIN + "/control"
 SNAPSHOT_URL = PAGE_URL + "/motores.json"
+ACTIVITY_URL = PAGE_URL + "/actividad"
+ACTIVITY_SNAPSHOT_URL = ACTIVITY_URL + ".json"
 ENGINES = ("queues_tokens", "browsers_members")
 VIEWPORTS = (
     (800, 1280, "engines-tablet-800x1280.png"),
@@ -142,6 +144,8 @@ _PROBE_STEPS = frozenset(
         "members_inputs_after_redirect",
         "members_start",
         "running_refresh",
+        "activity_create",
+        "activity_load",
         "running_rows",
         "initial_session",
         "running_controls",
@@ -406,6 +410,8 @@ def make_fixture(source_sha: str) -> dict[str, Any]:
     _source(source_sha)
     from boca_socios.panel import engine_view
     from boca_socios.panel.members import MemberView
+    from boca_socios.panel.private_ui import worker_activity
+    from boca_socios.panel.worker_activity import WorkerActivitySnapshot
 
     snapshots = _snapshots()
     members = (
@@ -425,14 +431,24 @@ def make_fixture(source_sha: str) -> dict[str, Any]:
                 "html_sha256": hashlib.sha256(redirected).hexdigest(),
             }
         )
+    activity = worker_activity(
+        WorkerActivitySnapshot(_STAMP, "fixed_stages_only", "missing", ()),
+        engine_snapshot=snapshots[2],
+        members=members,
+    )
     fixture = {
-        "schema": 2,
+        "schema": 3,
         "source_sha": source_sha,
         "html": body.decode(),
         "csp": engine_view.csp(),
         "html_sha256": hashlib.sha256(body).hexdigest(),
         "snapshots": snapshots,
         "redirect_documents": redirect_documents,
+        "activity_document": {
+            "snapshot_phase": 2,
+            "html": activity.decode(),
+            "html_sha256": hashlib.sha256(activity).hexdigest(),
+        },
     }
     validate_fixture(fixture, source_sha)
     return fixture
@@ -451,9 +467,10 @@ def validate_fixture(value: object, source_sha: str) -> dict[str, Any]:
             "html_sha256",
             "snapshots",
             "redirect_documents",
+            "activity_document",
         }
         or type(value["schema"]) is not int
-        or value["schema"] != 2
+        or value["schema"] != 3
         or value["source_sha"] != source_sha
         or not isinstance(value["html"], str)
         or not 1 <= len(value["html"].encode()) <= 100_000
@@ -476,7 +493,9 @@ def validate_fixture(value: object, source_sha: str) -> dict[str, Any]:
         or len(value["redirect_documents"]) != 4
     ):
         raise ValueError("offline_fixture_unverified")
-    for document, phase in zip(value["redirect_documents"], (1, 2, 4, 5), strict=True):
+    for document, phase in zip(
+        [*value["redirect_documents"], value["activity_document"]], (1, 2, 4, 5, 2), strict=True
+    ):
         if (
             not isinstance(document, dict)
             or set(document) != {"snapshot_phase", "html", "html_sha256"}
@@ -588,6 +607,7 @@ class _FixtureService:
         self.stopping = Event()
         self.phase = 0
         self.documents = self.snapshots = self.rejected = 0
+        self.activity_documents = self.activity_snapshots = 0
         self.posts: list[str] = []
         self.active: socket.socket | None = None
         self.server: _FixtureHTTPServer | None = None
@@ -601,6 +621,8 @@ class _FixtureService:
                 "snapshots": self.snapshots,
                 "native_posts": len(self.posts),
                 "rejected": self.rejected,
+                "activity_documents": self.activity_documents,
+                "activity_snapshots": self.activity_snapshots,
             }
 
     def operations(self) -> list[str]:
@@ -625,7 +647,7 @@ class _FixtureService:
         with self.lock:
             if self.stopping.is_set():
                 raise _FixtureRejected(503)
-            if self.documents + self.snapshots + len(self.posts) >= 33:
+            if self.documents + self.activity_documents + self.snapshots + len(self.posts) >= 34:
                 raise _FixtureRejected(429)
             if headers.get("origin") not in (None, ORIGIN):
                 raise _FixtureRejected(403)
@@ -647,12 +669,41 @@ class _FixtureService:
                     },
                     document["html"].encode(),
                 )
-            if method == "GET" and path == "/control/motores.json":
+            if method == "GET" and path == "/control/actividad":
+                if self.phase != 2 or self.documents != 3 or self.activity_documents != 0:
+                    raise _FixtureRejected()
+                self.activity_documents += 1
+                return (
+                    200,
+                    {
+                        "Content-Type": "text/html; charset=utf-8",
+                        "Content-Security-Policy": self.fixture["csp"],
+                        "Referrer-Policy": "same-origin",
+                    },
+                    self.fixture["activity_document"]["html"].encode(),
+                )
+            if method == "GET" and path in {"/control/motores.json", "/control/actividad.json"}:
                 if self.snapshots >= 24:
                     raise _FixtureRejected(429)
                 if not self.documents:
                     raise _FixtureRejected()
                 self.snapshots += 1
+                if path == "/control/actividad.json":
+                    if self.activity_documents != 1:
+                        raise _FixtureRejected()
+                    self.activity_snapshots += 1
+                    return (
+                        200,
+                        {"Content-Type": "application/json"},
+                        _json(
+                            {
+                                "observed_at": _STAMP,
+                                "browser_detail": "fixed_stages_only",
+                                "chromium_telemetry": "missing",
+                                "events": [],
+                            }
+                        ),
+                    )
                 return (
                     200,
                     {"Content-Type": "application/json"},
@@ -946,6 +997,7 @@ async def _viewport(
     errors: list[object] = []
     context: BrowserContext | None = None
     page: Page | None = None
+    activity: Page | None = None
     failure: BaseException | None = None
     failure_counts: dict[str, int] | None = None
     failure_state: dict[str, object] | None = None
@@ -967,7 +1019,12 @@ async def _viewport(
 
         async def route_document(route: Route) -> None:
             request = route.request
-            allowed = request.method == "GET" and request.url in {PAGE_URL, SNAPSHOT_URL}
+            allowed = request.method == "GET" and request.url in {
+                PAGE_URL,
+                SNAPSHOT_URL,
+                ACTIVITY_URL,
+                ACTIVITY_SNAPSHOT_URL,
+            }
             allowed |= (
                 request.url in {post_url(operation) for operation in POST_ORDER}
                 and request.method == "POST"
@@ -1015,6 +1072,7 @@ async def _viewport(
             raise RuntimeError("required_member_unverified")
         step = "initial_inputs"
         for engine in ENGINES:
+            await page.locator(f"#{engine}-start details > summary").click()
             fields = expected_post_fields(engine + ":start")
             for browser_name in ("chromium", "firefox", "webkit"):
                 await page.locator(f"#{engine}-{browser_name}").fill(fields[browser_name])
@@ -1024,6 +1082,7 @@ async def _viewport(
         # A real POST/303/GET replaces the document, as the controller does.
         # Enter B's values on that new document before submitting its form.
         step = "members_inputs_after_redirect"
+        await page.locator("#browsers_members-start details > summary").click()
         for browser_name in ("chromium", "firefox", "webkit"):
             await page.locator(f"#browsers_members-{browser_name}").fill(
                 expected_post_fields(POST_ORDER[1])[browser_name]
@@ -1034,12 +1093,22 @@ async def _viewport(
 
         step = "running_refresh"
         await _refresh(page)
+        step = "activity_create"
+        activity = await context.new_page()
+        activity.on("pageerror", record_page_error)
+        step = "activity_load"
+        await activity.goto(ACTIVITY_URL, wait_until="load", timeout=10_000)
+        await activity.wait_for_function(
+            "() => document.getElementById('engines-live').textContent !== 'Último estado disponible.'"
+        )
         step = "running_rows"
-        await page.wait_for_function(
+        await activity.wait_for_function(
             "() => document.querySelectorAll('[data-session-id]').length === 2"
         )
         step = "initial_session"
-        original_row = await page.locator(f'[data-session-id="{_identity(301)}"]').element_handle()
+        original_row = await activity.locator(
+            f'[data-session-id="{_identity(301)}"]'
+        ).element_handle()
         if original_row is None:
             raise RuntimeError("initial_session_unverified")
         step = "running_controls"
@@ -1050,18 +1119,23 @@ async def _viewport(
                 raise RuntimeError("running_stop_unverified")
         # Edits for the next activation must survive the genuine 5-second poll.
         step = "preserved_inputs_prepare"
+        for engine in ENGINES:
+            await page.locator(f"#{engine}-start details > summary").click()
         await page.locator("#queues_tokens-chromium").fill("19")
         await page.locator("#browsers_members-chromium").fill("11")
         await page.locator("#browsers_members-member").select_option(_MEMBERS[0])
         service.advance_poll()
+        await _refresh(page)
         step = "live_rows_poll"
-        await page.wait_for_function(
+        await activity.bring_to_front()
+        await activity.wait_for_function(
             "() => document.querySelectorAll('[data-session-id]').length === 3", timeout=7000
         )
         step = "session_preserved"
         if (
             not await original_row.evaluate("node => node.isConnected")
             or service.counters()["documents"] != 3
+            or service.counters()["activity_documents"] != 1
         ):
             raise RuntimeError("existing_session_replaced")
         step = "live_projection"
@@ -1073,10 +1147,10 @@ async def _viewport(
                 "data-member-id"
             )
             != _MEMBERS[1]
-            or await page.locator("#engines-total-requested_contexts").inner_text() != "50"
-            or await page.locator("#engines-total-created").inner_text() != "3"
-            or await page.locator("#engines-total-active").inner_text() != "3"
-            or await page.locator("#queues_tokens-queues").inner_text() != "1"
+            or await activity.locator("#engines-total-requested_contexts").inner_text() != "50"
+            or await activity.locator("#engines-total-created").inner_text() != "3"
+            or await activity.locator("#engines-total-active").inner_text() != "3"
+            or await activity.locator("#queues_tokens-queues").inner_text() != "1"
         ):
             raise RuntimeError("live_snapshot_projection_unverified")
         step = "stop_fences"
@@ -1087,10 +1161,11 @@ async def _viewport(
                     raise RuntimeError("independent_stop_fence_unverified")
         step = "private_metadata"
         if (
-            not await page.locator("[data-field=inspect]").evaluate_all(
+            not await activity.locator("[data-field=inspect]").evaluate_all(
                 "nodes => nodes.length === 3 && nodes.every(node => /^\\/control\\/sesiones\\/[0-9a-f-]{36}$/.test(node.getAttribute('href')))"
             )
             or await page.locator('input[type="password"]').count() != 0
+            or await activity.locator('input[type="password"], form').count() != 0
         ):
             raise RuntimeError("private_metadata_projection_unverified")
 
@@ -1098,6 +1173,10 @@ async def _viewport(
         await _submit(page, POST_ORDER[2])
         step = "queues_stopped_refresh"
         await _refresh(page)
+        await _refresh(activity)
+        await activity.wait_for_function(
+            "() => document.getElementById('engines-total-active').textContent === '1'"
+        )
         step = "queues_stopped_poll"
         await page.wait_for_function(
             "() => document.getElementById('queues_tokens-stop-button').disabled"
@@ -1107,29 +1186,41 @@ async def _viewport(
             await page.locator("#browsers_members-stop-button").is_disabled()
             or await page.locator("#queues_tokens-start-button").is_disabled()
             or not await page.locator("#browsers_members-start-button").is_disabled()
-            or await page.locator("#browsers_members-active").inner_text() != "1"
-            or await page.locator("#engines-total-active").inner_text() != "1"
+            or await activity.locator("#browsers_members-active").inner_text() != "1"
+            or await activity.locator("#engines-total-active").inner_text() != "1"
         ):
             raise RuntimeError("independent_stop_projection_unverified")
         step = "layout"
-        layout = await page.evaluate("""() => {
-          const controls = Array.from(document.querySelectorAll('button, input:not([type=hidden]), select, a'));
+        # Native details hide optional inputs/secondary links intentionally;
+        # validate every visible target on both pages, including summaries.
+        for view in (page, activity):
+            await view.locator("body > details > summary").click()
+            if view is page:
+                for engine in ENGINES:
+                    await view.locator(f"#{engine}-start details > summary").click()
+            layout = await view.evaluate("""() => {
+          const controls = Array.from(document.querySelectorAll('button, input:not([type=hidden]), select, a, summary'))
+            .filter(node => node.getClientRects().length > 0);
           return {targets: controls.length > 12 && controls.every(node => {
             const box = node.getBoundingClientRect();
             return box.height >= 52 && box.left >= 0 && box.right <= innerWidth;
           }), overflow: document.documentElement.scrollWidth > innerWidth,
           height: document.documentElement.scrollHeight};
         }""")
-        if not layout["targets"] or layout["overflow"] or layout["height"] > _MAX_HEIGHT:
-            raise RuntimeError("accessible_layout_unverified")
+            if not layout["targets"] or layout["overflow"] or layout["height"] > _MAX_HEIGHT:
+                raise RuntimeError("accessible_layout_unverified")
         step = "screenshot"
-        screenshot = await page.screenshot(type="png", full_page=True, animations="disabled")
+        screenshot = await activity.screenshot(type="png", full_page=True, animations="disabled")
         step = "screenshot_verify"
         _png_dimensions(screenshot, width, height)
         step = "members_stop"
         await _submit(page, POST_ORDER[3])
         step = "members_stopped_refresh"
         await _refresh(page)
+        await _refresh(activity)
+        await activity.wait_for_function(
+            "() => document.getElementById('engines-total-active').textContent === '0'"
+        )
         step = "members_stopped_poll"
         await page.wait_for_function(
             "() => document.getElementById('browsers_members-stop-button').disabled"
@@ -1139,6 +1230,8 @@ async def _viewport(
         posts = service.operations()
         if (
             evidence["documents"] != 5
+            or evidence["activity_documents"] != 1
+            or evidence["activity_snapshots"] < 1
             or not 9 <= evidence["snapshots"] <= 24
             or posts != list(POST_ORDER)
             or evidence["rejected"]
@@ -1149,7 +1242,7 @@ async def _viewport(
         return {
             "width": width,
             "height": height,
-            "document_requests": evidence["documents"],
+            "document_requests": evidence["documents"] + evidence["activity_documents"],
             "snapshot_requests": evidence["snapshots"],
             "native_posts": posts,
             "other_requests": evidence["rejected"],
@@ -1386,7 +1479,7 @@ def write_artifacts(
             or type(view["height"]) is not int
             or view["height"] != height
             or type(view["document_requests"]) is not int
-            or view["document_requests"] != 5
+            or view["document_requests"] != 6
             or type(view["snapshot_requests"]) is not int
             or not 9 <= view["snapshot_requests"] <= 24
             or view["native_posts"] != list(POST_ORDER)

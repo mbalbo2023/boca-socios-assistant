@@ -93,6 +93,48 @@ def test_activity_requires_owner_passkey_permission_and_same_origin(tmp_path: Pa
     assert "script-src 'sha256-" in headers["Content-Security-Policy"]
 
 
+def test_activity_combines_both_engines_without_minting_operations(tmp_path, monkeypatch):
+    import base64
+    import hashlib
+    import re
+
+    from test_private_engine_controls import panel
+
+    app, engines, cookie = panel(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        app._sessions, "new_operation", lambda *a, **k: pytest.fail("GET allocated")
+    )
+    code, headers, body = _request(app, "/control/actividad", cookie=cookie)
+    assert code == 200
+    for engine in (b"queues_tokens", b"browsers_members"):
+        assert b'id="' + engine + b'-state"' in body
+        assert b'id="' + engine + b'-sessions"' in body
+    assert b'id="worker-events"' in body
+    assert b"/control/motores.json" in body and b"/control/actividad.json" in body
+    assert b"<form" not in body and b'name="operation_id"' not in body
+    for kind in ("script", "style"):
+        for content in re.findall(rf"<{kind}>(.*?)</{kind}>".encode(), body, re.S):
+            digest = base64.b64encode(hashlib.sha256(content).digest()).decode()
+            assert f"'sha256-{digest}'" in headers["Content-Security-Policy"]
+    assert "unsafe-inline" not in headers["Content-Security-Policy"]
+    assert engines.calls == []
+
+
+def test_activity_separates_check_time_from_last_actual_worker_event():
+    from boca_socios.panel.private_ui import worker_activity
+    from boca_socios.panel.worker_activity import WorkerActivityEvent, WorkerActivitySnapshot
+    from test_engine_view import Page
+
+    event = WorkerActivityEvent("2026-11-16T10:00:00Z", "host", "warning", "Acuse no verificado")
+    snapshot = WorkerActivitySnapshot(
+        "2026-11-16T12:00:00Z", "fixed_stages_only", "degraded", (event,)
+    )
+    page = Page(worker_activity(snapshot))
+    assert "07:00:00 ART" in page.text["worker-activity-observed"]
+    assert "09:00:00 ART" in page.text["worker-activity-refreshed"]
+    assert "no verificable" in page.text["chromium-telemetry-status"]
+
+
 def test_activity_denies_owner_session_without_simulation_permission(tmp_path: Path) -> None:
     _original, key, credential_id = _passkey([0.0])
     provider = PasskeyOwnerAuthentication(
