@@ -27,7 +27,7 @@ def validate_worker_identity(uid: int, executable_path: Path) -> None:
 
 
 async def verify() -> None:
-    from playwright.async_api import async_playwright
+    from playwright.async_api import async_playwright  # type: ignore[import-not-found]
 
     phase = "initialize"
     try:
