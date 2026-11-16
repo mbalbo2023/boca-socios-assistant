@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       diagnostic_mode:
-        description: Existing full3 baseline or the two fixed Firefox PID budgets
+        description: Choose full3, fixed Firefox PID budgets, or capacity50 offline
         type: choice
         required: true
         default: full3
         options:
           - full3
           - firefox-pids
+          - capacity50
 
 permissions:
   contents: read
@@ -35,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$DIAGNOSTIC_MODE" in
-            full3|firefox-pids) ;;
+            full3|firefox-pids|capacity50) ;;
             *) printf 'BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO phase=configuration reason=invalid_mode\n' >&2; exit 1 ;;
           esac
       - name: Build one disposable full Playwright worker image
@@ -49,6 +50,7 @@ jobs:
             --tag "$IMAGE" .
           test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
       - name: Verify all three bundles exist without blackbox execution
+        if: env.DIAGNOSTIC_MODE != 'capacity50'
         env:
           IMAGE: boca-browser-full3-diagnostic:${{ github.sha }}
         run: |
@@ -68,6 +70,7 @@ jobs:
           print("BOCA_FULL_PLAYWRIGHT_BUNDLES chromium=PRESENT firefox=PRESENT webkit=PRESENT offline=true")
           '
       - name: Probe each Playwright engine in a separate offline process
+        if: env.DIAGNOSTIC_MODE != 'capacity50'
         env:
           IMAGE: boca-browser-full3-diagnostic:${{ github.sha }}
         run: |
@@ -529,3 +532,13 @@ jobs:
             fi
           done
           test "$failures" -eq 0
+      - name: Measure capacity50 in one attested offline container
+        if: env.DIAGNOSTIC_MODE == 'capacity50'
+        env:
+          IMAGE: boca-browser-full3-diagnostic:${{ github.sha }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src timeout 650s python -m boca_socios.browser.capacity_fixture --runner \
+            "$IMAGE" "$SOURCE_SHA" "$RUN_ID" "$GITHUB_WORKSPACE/docker/seccomp_profile.json"
