@@ -1,6 +1,17 @@
 # Binding instructions for every coding agent
 
-## Estado vigente G2 — candidato CODE_ONLY, no instalado (2026-11-16 ART)
+## G6 — excepción de publisher, no desplegada (2026-11-16 ART)
+
+La release869/run43922790822 falló en el primer push del browser con
+`unknown blob`; causa de registry/cliente no acreditada. No reintentar ese run
+ni volver a despachar su SHA. La excepción única y 4/4 PRE_CODE están en
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6925043732).
+Este cambio es CODE_ONLY hasta revisión independiente, CI, integración y
+autorización operativa: un único retry global dentro del mismo run, sin rebuild.
+No equivale a release ni deploy exitoso; BETA NO_GO, Telegram sender OFF y
+SIMULATION_ONLY. Root conserva ownership de GitHub, gates y operaciones Boca.
+
+## Histórico G2 — candidato CODE_ONLY (2026-11-16 ART)
 
 La continuidad vigente está en [#417, checkpoint canónico](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6922744921)
 y [reconciliación de raíz](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6923058844).
