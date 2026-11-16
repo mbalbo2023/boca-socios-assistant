@@ -3363,7 +3363,7 @@ jobs:
             exit 0
           fi
           if [[ "$BOCA_OPERATION" = telegram-public-boundary-observe ]]; then
-            if [[ ! "$verified" =~ ^BOCA_TELEGRAM_PUBLIC_BOUNDARY_V1\  ]]; then
+            if [[ ! "$verified" =~ ^BOCA_TELEGRAM_PUBLIC_BOUNDARY_V2\  ]]; then
               printf 'BOCA_TELEGRAM_PUBLIC_BOUNDARY state=INCOMPLETE_NO_GO reason=TRANSPORT_UNVERIFIED action=PRESERVE_NO_RETRY\n' >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
