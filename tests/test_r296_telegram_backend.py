@@ -22,6 +22,7 @@ from boca_socios.host_telegram_egress_helper import TelegramHelperPhaseProof
 from boca_socios.host_telegram_installed_context import InstalledTelegramContext
 from boca_socios.host_telegram_maintenance import InstalledMaintenance
 from boca_socios.host_telegram_owner_stage import _OWNER_PERMISSIONS
+from boca_socios.panel import telegram_recipient as public_recipient
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.telegram_pairing_staging import (
     PairingStageRequest,
@@ -206,6 +207,16 @@ def _transaction(tmp_path, monkeypatch, *, fail=""):
         "_write_new",
         lambda fd, name, content, uid: original_write(fd, name, content, os.geteuid()),
     )
+
+    # This historical integration fixture has files owned by the local runner
+    # UID, not by the mapped UID 10001. Only the independent G2 tests exercise
+    # the real public DATA opener and its 0700/0755, owner and FD guards.
+    def local_public_data_directory(path):
+        if path != data:
+            raise bootstrap.BootstrapError("telegram_directory_unsafe")
+        return original_directory(path, os.geteuid())
+
+    monkeypatch.setattr(public_recipient, "_public_data_directory", local_public_data_directory)
 
     def stage(new_envelope=None):
         staged_envelope = envelope if new_envelope is None else new_envelope
