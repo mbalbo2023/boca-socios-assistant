@@ -155,6 +155,10 @@ _PROBE_STEPS = frozenset(
         "live_rows_poll",
         "session_preserved",
         "live_projection",
+        "live_projection_inputs",
+        "live_projection_member",
+        "live_projection_totals",
+        "live_projection_queue",
         "stop_fences",
         "private_metadata",
         "queues_stop",
@@ -1194,19 +1198,38 @@ async def _viewport(
         ):
             raise RuntimeError("existing_session_replaced")
         step = "live_projection"
+        technical = activity.locator("details").filter(
+            has=activity.get_by_text("Datos técnicos de los motores", exact=True)
+        )
+        summary = technical.locator("summary")
+        if await technical.get_attribute("open") is not None:
+            raise RuntimeError("live_snapshot_projection_unverified")
+        await summary.click()
+        if await technical.get_attribute("open") is None:
+            raise RuntimeError("live_snapshot_projection_unverified")
+        step = "live_projection_inputs"
         if (
             await page.locator("#queues_tokens-chromium").input_value() != "19"
             or await page.locator("#browsers_members-chromium").input_value() != "11"
-            or await page.locator("#browsers_members-member").input_value() != _MEMBERS[0]
+        ):
+            raise RuntimeError("live_snapshot_projection_unverified")
+        step = "live_projection_member"
+        if (
+            await page.locator("#browsers_members-member").input_value() != _MEMBERS[0]
             or await page.locator("#browsers_members-current-member").get_attribute(
                 "data-member-id"
             )
             != _MEMBERS[1]
-            or await activity.locator("#engines-total-requested_contexts").inner_text() != "50"
-            or await activity.locator("#engines-total-created").inner_text() != "3"
-            or await activity.locator("#engines-total-active").inner_text() != "3"
-            or await activity.locator("#queues_tokens-queues").inner_text() != "1"
         ):
+            raise RuntimeError("live_snapshot_projection_unverified")
+        step = "live_projection_totals"
+        for name, expected in (("requested_contexts", "50"), ("created", "3"), ("active", "3")):
+            total = technical.locator(f"#engines-total-{name}")
+            if not await total.is_visible() or await total.inner_text() != expected:
+                raise RuntimeError("live_snapshot_projection_unverified")
+        step = "live_projection_queue"
+        queue_count = activity.locator("#queues_tokens-queues")
+        if not await queue_count.is_visible() or await queue_count.inner_text() != "1":
             raise RuntimeError("live_snapshot_projection_unverified")
         step = "stop_fences"
         for engine in ENGINES:
@@ -1246,6 +1269,9 @@ async def _viewport(
         ):
             raise RuntimeError("independent_stop_projection_unverified")
         step = "layout"
+        await summary.click()
+        if await technical.get_attribute("open") is not None:
+            raise RuntimeError("accessible_layout_unverified")
         for view in (page, activity):
             primary = view.locator('nav[aria-label="Principal"] a')
             if (

@@ -553,8 +553,15 @@ def test_global_intake_pause_resume_never_stops_http_or_existing_commands() -> N
         assert _request(app, "/", cookie=cookie)[0] == 200
         initial = _request(app, "/control", cookie=cookie)
         assert initial[0] == 200 and b"Pausada" in initial[2]
-        assert b'<nav aria-label="Principal">' in initial[2]
-        assert b'<a href="/control">Control</a>' in initial[2]
+        primary = re.search(rb'<nav aria-label="Principal">(.*?)</nav>', initial[2], re.S)
+        assert primary is not None
+        assert re.findall(rb'href="([^"]+)"', primary[1]) == [
+            b"/control",
+            b"/control/actividad",
+            b"/configuracion",
+        ]
+        assert primary[1].count(b'aria-current="page"') == 1
+        assert b'<a href="/control" aria-current="page">Control</a>' in primary[1]
         assert b'<button type="submit">Reanudar nuevas simulaciones</button>' in initial[2]
         assert b'<p role="status">Estado: Pausada.' in initial[2]
         _, _, form = _request(app, "/comandos", cookie=cookie)
