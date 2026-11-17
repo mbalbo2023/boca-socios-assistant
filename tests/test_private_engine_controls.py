@@ -27,6 +27,9 @@ class Engines:
         self.calls.append((engine, operation_id, member_id, counts))
         return SimpleNamespace(activation_id=operation_id)
 
+    def stop(self, engine, operation_id, *, activation_id, generation):
+        self.calls.append((engine, operation_id, activation_id, generation))
+
     def private_details(self, session_id, *, owner_authenticated):
         assert owner_authenticated is True
         return None
@@ -76,10 +79,11 @@ def test_independent_route_has_own_csrf_scope_and_only_dispatches_chosen_engine(
         == 403
     )
     assert engines.calls == []
-    assert (
-        _request(app, path, cookie=cookie, method="POST", payload=fields, origin=app._origin)[0]
-        == 303
+    code, headers, _ = _request(
+        app, path, cookie=cookie, method="POST", payload=fields, origin=app._origin
     )
+    assert code == 303
+    assert headers["Location"] == "/control/colas"
     assert engines.calls == [
         ("queues_tokens", fields["operation_id"], None, {"chromium": 3, "firefox": 1, "webkit": 1})
     ]
@@ -106,7 +110,82 @@ def test_metadata_and_inspection_routes_require_owner_and_do_not_start_work(tmp_
     assert engines.calls == []
 
 
-def test_owner_token_monitor_redirects_to_activity_without_allocating_operations(
+@pytest.mark.parametrize(
+    "path,engine,other",
+    [
+        ("/control/colas", "queues_tokens", "browsers_members"),
+        ("/control/socios", "browsers_members", "queues_tokens"),
+    ],
+)
+def test_dedicated_engine_pages_keep_only_their_controls_and_observations(
+    tmp_path, monkeypatch, path, engine, other
+):
+    app, engines, cookie = panel(tmp_path, monkeypatch)
+    assert _request(app, path)[0] == 401
+    code, headers, body = _request(app, path, cookie=cookie)
+    assert code == 200 and headers["Cache-Control"] == "no-store"
+    assert f'data-engine="{engine}"'.encode() in body
+    assert f'data-engine="{other}"'.encode() not in body
+    for action in ("iniciar", "detener"):
+        assert f'action="/control/motores/{engine}/{action}"'.encode() in body
+        assert f'action="/control/motores/{other}/{action}"'.encode() not in body
+    assert f'id="{engine}-sessions"'.encode() in body
+    assert f'id="{engine}-requested_contexts"'.encode() in body
+    assert f'id="{engine}-created"'.encode() in body
+    assert f'id="{engine}-active"'.encode() in body
+    assert b"WORKER_RECEIPT_UNVERIFIED" in body
+    assert "última muestra".encode() in body
+    assert b"/control/motores.json" in body
+    if engine == "browsers_members":
+        assert b'name="member_id"' in body
+        assert "Reserva real y capturas terminales no están implementadas".encode() in body
+    assert engines.calls == []
+
+
+@pytest.mark.parametrize("path", ["/control/colas", "/control/socios"])
+def test_dedicated_engine_pages_forbid_readers(tmp_path, monkeypatch, path):
+    app, engines, cookie = panel(
+        tmp_path, monkeypatch, permissions=frozenset({"members:enroll", "local-status:read"})
+    )
+    assert _request(app, path, cookie=cookie)[0] == 403
+    assert engines.calls == []
+
+
+@pytest.mark.parametrize(
+    "engine,destination",
+    [
+        ("queues_tokens", "/control/colas"),
+        ("browsers_members", "/control/socios"),
+    ],
+)
+@pytest.mark.parametrize("action", ["iniciar", "detener"])
+def test_engine_post_and_exact_replay_return_only_to_fixed_engine_destination(
+    tmp_path, monkeypatch, engine, destination, action
+):
+    app, engines, cookie = panel(tmp_path, monkeypatch)
+    _, _, body = _request(app, destination, cookie=cookie)
+    path = f"/control/motores/{engine}/{action}"
+    form = re.search(rb'<form[^>]+action="' + path.encode() + rb'"[^>]*>(.*?)</form>', body, re.S)
+    assert form is not None
+    fields = {
+        name.decode(): value.decode()
+        for name, value in re.findall(rb'name="([^"]+)"[^>]*value="([^"]*)"', form[1])
+    }
+    if action == "iniciar":
+        fields.update(chromium="1", firefox="0", webkit="0")
+        if engine == "browsers_members":
+            fields["member_id"] = str(uuid4())
+    else:
+        fields.update(activation_id=str(uuid4()), generation="1")
+    for _ in range(2):
+        code, headers, _ = _request(
+            app, path, cookie=cookie, method="POST", payload=fields, origin=app._origin
+        )
+        assert code == 303 and headers["Location"] == destination
+    assert len(engines.calls) == 1 and engines.calls[0][0] == engine
+
+
+def test_owner_token_monitor_redirects_to_queues_without_allocating_operations(
     tmp_path, monkeypatch
 ):
     app, engines, cookie = panel(tmp_path, monkeypatch)
@@ -115,7 +194,7 @@ def test_owner_token_monitor_redirects_to_activity_without_allocating_operations
     )
     assert _request(app, "/monitor/tokens")[0] == 401
     code, headers, page = _request(app, "/monitor/tokens", cookie=cookie)
-    assert code == 303 and headers["Location"] == "/control/actividad"
+    assert code == 303 and headers["Location"] == "/control/colas"
     assert headers["Cache-Control"] == "no-store"
     assert page == b""
     code, headers, page = _request(app, "/control/actividad", cookie=cookie)
@@ -127,7 +206,7 @@ def test_owner_token_monitor_redirects_to_activity_without_allocating_operations
 
 
 @pytest.mark.parametrize("path", ["/", "/control"])
-def test_control_aliases_keep_controls_and_three_primary_navigation_links(
+def test_control_aliases_keep_controls_and_five_primary_navigation_links(
     tmp_path, monkeypatch, path
 ):
     app, engines, cookie = panel(tmp_path, monkeypatch)
@@ -141,7 +220,9 @@ def test_control_aliases_keep_controls_and_three_primary_navigation_links(
     assert primary is not None
     assert re.findall(rb'href="([^"]+)"[^>]*>([^<]+)</a>', primary[1]) == [
         (b"/control", b"Control"),
-        (b"/control/actividad", b"Actividad"),
+        (b"/control/colas", "Motor A · Colas y tokens".encode()),
+        (b"/control/socios", "Motor B · Socios".encode()),
+        (b"/telegram", b"Telegram"),
         (b"/configuracion", "Configuración".encode()),
     ]
     secondary = re.search(rb'<nav aria-label="Otras funciones">(.*?)</nav>', page, re.S)
@@ -149,9 +230,9 @@ def test_control_aliases_keep_controls_and_three_primary_navigation_links(
     assert b"Otras funciones" in secondary.group(1)
     assert "Más secciones".encode() not in page
     for target in (
+        b"/control/actividad",
         b"/socios",
         b"/comandos",
-        b"/telegram",
         b"/estado",
         b"/avisos",
         b"/avisos-oficiales",
@@ -232,7 +313,7 @@ def test_live_activity_html_keeps_timeline_with_real_engine_coordinator(tmp_path
         assert b'action="/control/motores/' not in page
         assert _request(app, "/control/actividad.json", cookie=cookie)[0] == 200
         code, alias_headers, _ = _request(app, "/monitor/tokens", cookie=cookie)
-        assert code == 303 and alias_headers["Location"] == "/control/actividad"
+        assert code == 303 and alias_headers["Location"] == "/control/colas"
         assert wakes == []
     finally:
         engines.close()

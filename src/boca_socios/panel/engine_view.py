@@ -249,9 +249,9 @@ _SESSION_FIELDS_SCRIPT = """
   }
   function inspectionLabel(item, index, engine) {
     const queue = item.has_target_url === true, auth = item.has_auth === true;
-    const prefix = queue && auth ? 'Ver tokens de cola y autenticación de la sesión ' :
-      queue ? 'Ver token de cola de la sesión ' : auth ?
-      'Ver tokens de autenticación de la sesión ' : 'Inspeccionar sesión ';
+    const prefix = queue && auth ? 'Ver y copiar tokens de cola y autenticación/URL de la sesión ' :
+      queue ? 'Ver y copiar token/URL de la sesión ' : auth ?
+      'Ver y copiar tokens de autenticación de la sesión ' : 'Inspeccionar sesión ';
     return prefix + index + ' de ' + engineNames[engine];
   }
   function fieldValue(item, field) {
@@ -354,8 +354,10 @@ _POLL_END = """
     for (const name of Object.keys(metricNames)) {
       setText(document.getElementById(engine + '-' + name), number(item[name]));
     }
-    setText(document.getElementById(engine + '-counts'), Object.entries(browserNames)
-      .map(([name, label]) => label + ': ' + number((item.counts || {})[name])).join(' · '));
+    setText(document.getElementById(engine + '-counts'),
+      !uuid.test(item.activation_id) && item.requested_contexts === 0 ?
+        'Sin solicitudes verificadas' : Object.entries(browserNames)
+          .map(([name, label]) => label + ': ' + number((item.counts || {})[name])).join(' · '));
     const sessions = item.sessions;
     const queues = new Set(sessions.map(session => session.queue_id)
       .filter(id => typeof id === 'string' && id.trim() && id !== 'UNKNOWN'));
@@ -623,11 +625,11 @@ def _navigation(value: object) -> str:
 def _inspection_label(session: Mapping[str, object], index: int, engine: str) -> str:
     queue, auth = session.get("has_target_url") is True, session.get("has_auth") is True
     prefix = (
-        "Ver tokens de cola y autenticación de la sesión "
+        "Ver y copiar tokens de cola y autenticación/URL de la sesión "
         if queue and auth
-        else "Ver token de cola de la sesión "
+        else "Ver y copiar token/URL de la sesión "
         if queue
-        else "Ver tokens de autenticación de la sesión "
+        else "Ver y copiar tokens de autenticación de la sesión "
         if auth
         else "Inspeccionar sesión "
     )
@@ -793,6 +795,16 @@ def _forms(
     )
 
 
+def _distribution(item: Mapping[str, object]) -> str:
+    if _uuid(item.get("activation_id")) is None and item.get("requested_contexts") == 0:
+        return "Sin solicitudes verificadas"
+    counts = item.get("counts")
+    counts = counts if isinstance(counts, Mapping) else {}
+    return " · ".join(
+        f"{label}: {_number(counts.get(browser))}" for browser, label in _BROWSERS.items()
+    )
+
+
 def _section(
     engine: str,
     item: Mapping[str, object],
@@ -808,11 +820,7 @@ def _section(
         f'<dt>{label}</dt><dd id="{engine}-{name}">{_number(item.get(name))}</dd>'
         for name, label in _METRICS.items()
     )
-    counts = item.get("counts")
-    counts = counts if isinstance(counts, Mapping) else {}
-    distribution = " · ".join(
-        f"{label}: {_number(counts.get(browser))}" for browser, label in _BROWSERS.items()
-    )
+    distribution = _distribution(item)
     sessions = _entries(item.get("sessions"))
     queue_ids = {
         value
@@ -919,13 +927,20 @@ def page(
     members: tuple[MemberView, ...],
     *,
     site_url_ready: bool,
+    engine: str | None = None,
 ) -> bytes:
     """Render short owner controls; only authenticated POST routes create effects."""
     from boca_socios.panel.private_ui import _page
 
-    engines = {name: _engine(snapshot, name) for name in _ENGINES}
+    engines = {
+        name: _engine(snapshot, name) for name in _ENGINES if engine is None or name == engine
+    }
+    title = {
+        "queues_tokens": "Motor A · Colas y tokens",
+        "browsers_members": "Motor B · Navegadores y socios",
+    }.get(engine or "", "Control de motores")
     content = (
-        "<h1>Control de motores</h1>"
+        f"<h1>{title}</h1>"
         "<p>SIMULATION_ONLY. Sin reservas ni compras reales. "
         "Dos motores lógicos, un worker físico; inicio y detención independientes.</p>"
         + _poll_status(snapshot)
@@ -937,11 +952,43 @@ def page(
         _section(name, item, csrf, operations, members, site_url_ready)
         for name, item in engines.items()
     )
+    if engine is not None:
+        item = engines[engine]
+        content += (
+            "<h2>Actividad observada de este motor</h2>"
+            "<p>Una consulta reciente no es un evento nuevo del worker. "
+            "Arranque sin confirmar (WORKER_RECEIPT_UNVERIFIED) no significa ausencia de evento. "
+            "Los contadores solicitado, creado y activo no certifican salud física. "
+            "URL configurada no acredita navegación.</p>"
+            "<p>Múltiples contextos concurrentes de Chromium, Firefox y WebKit comparten "
+            "el presupuesto global existente. Cada sesión conserva su propia observación; "
+            "no acredita posiciones de cola independientes ni entradas adicionales.</p>"
+            + f"<p>{_SAMPLE_NOTICE}</p>"
+            + '<dl class="engine-metrics">'
+            + "".join(
+                f'<dt>{label}</dt><dd id="{engine}-{name}">{_number(item.get(name))}</dd>'
+                for name, label in _METRICS.items()
+            )
+            + "</dl>"
+            + f'<p>Distribución solicitada recibida: <span id="{engine}-counts">'
+            + _distribution(item)
+            + "</span></p>"
+            "<p>Sin desglose verificable de creados/activos por tipo de navegador. "
+            "Creados y activos son totales del motor; las cantidades del formulario "
+            "configuran únicamente el próximo inicio.</p>"
+        )
+        if engine == "queues_tokens":
+            content += "<p>La revelación requiere el POST privado autorizado de la sesión; no se valida el token.</p>"
+        else:
+            content += "<p>Reserva real y capturas terminales no están implementadas. No se confirma ninguna entrada.</p>"
+        content += _history(engine, item)
     content += (
         '<p><a href="/control/actividad">Ver sesiones, tokens y actividad observada</a></p>'
         "<noscript>La página conserva el estado de la última consulta. "
         "Recargue para consultar cambios; los formularios funcionan sin JavaScript.</noscript>"
     )
     return _page(
-        "Motores", content, script=f"<style>{_STYLE}</style><script>{_CONTROL_SCRIPT}</script>"
+        title,
+        content,
+        script=f"<style>{_STYLE}</style><script>{_SCRIPT if engine else _CONTROL_SCRIPT}</script>",
     )
