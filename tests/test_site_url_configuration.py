@@ -35,9 +35,12 @@ def _form_fields(app, cookie: str) -> dict[str, str]:
     }
 
 
-def test_site_url_configuration_is_owner_only_and_discoverable(tmp_path: Path) -> None:
+def test_site_url_configuration_is_guest_readonly_and_owner_editable(tmp_path: Path) -> None:
     app, cookie, _ = _owner(tmp_path)
-    assert _request(app, "/configuracion")[0] == 401
+    guest_status, _, guest = _request(app, "/configuracion")
+    assert guest_status == 200
+    assert b"SITE_URL configurada" in guest
+    assert b"<form" not in guest and b"operation_id" not in guest
     status, headers, page = _request(app, "/configuracion", cookie=cookie)
     assert status == 200
     assert b"SITE_URL" in page

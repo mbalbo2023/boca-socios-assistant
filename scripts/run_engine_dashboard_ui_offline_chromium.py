@@ -1191,10 +1191,15 @@ async def _viewport(
         ):
             raise RuntimeError("independent_stop_projection_unverified")
         step = "layout"
-        # Native details hide optional inputs/secondary links intentionally;
-        # validate every visible target on both pages, including summaries.
+        # The seven historic destinations now remain visible in a navigation
+        # region; only engine-specific optional inputs use native details.
+        # Exercise the real navigation on both owner pages before measuring.
         for view in (page, activity):
-            await view.locator("body > details > summary").click()
+            historical = view.locator('nav[aria-label="Otras funciones"] a')
+            if await historical.count() != 7 or not all(
+                [await historical.nth(index).is_visible() for index in range(7)]
+            ):
+                raise RuntimeError("accessible_layout_unverified")
             if view is page:
                 for engine in ENGINES:
                     await view.locator(f"#{engine}-start details > summary").click()

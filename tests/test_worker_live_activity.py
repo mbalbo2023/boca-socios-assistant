@@ -70,7 +70,10 @@ def test_private_live_activity_returns_only_known_verified_lifecycle_stages(tmp_
 def test_activity_requires_owner_passkey_permission_and_same_origin(tmp_path: Path) -> None:
     app, _db, cookie = _private_app(tmp_path)
     assert _request(app, "/control/actividad.json")[0] == 401
-    assert _request(app, "/control/actividad")[0] == 401
+    guest_status, guest_headers, guest_html = _request(app, "/control/actividad")
+    assert guest_status == 200 and guest_headers["Cache-Control"] == "no-store"
+    assert "Set-Cookie" not in guest_headers
+    assert b"<form" not in guest_html and b'name="csrf"' not in guest_html
     assert (
         _request(
             app,

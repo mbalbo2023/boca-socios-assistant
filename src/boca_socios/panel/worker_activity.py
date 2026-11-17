@@ -150,6 +150,58 @@ _AUTOMATIC_LABELS: dict[str, tuple[Level, str]] = {
     ),
 }
 
+# Frozen guest vocabulary: independently reviewed public summaries. Never
+# derive this catalog from private labels, even if the private ones currently
+# look harmless. New private labels fail closed until separately approved here.
+_GUEST_PUBLIC_LABELS: dict[str, str] = {
+    "Chromium: solicitada la apertura del navegador aislado.": "Chromium: apertura solicitada.",
+    "Chromium: proceso del navegador creado.": "Chromium: navegador iniciado.",
+    "Chromium: contexto aislado preparado.": "Chromium: contexto preparado.",
+    "Chromium: página sintética preparada.": "Chromium: página de prueba preparada.",
+    "Chromium: contexto aislado cerrado.": "Chromium: contexto cerrado.",
+    "Chromium: navegador cerrado.": "Chromium: cierre registrado.",
+    "Chromium: operación interrumpida; revisar recibo del host.": "Chromium: ejecución interrumpida.",
+    "Simulación local: solicitud admitida, a la espera del motor.": "Simulación: solicitud aceptada.",
+    "Simulación local: ejecución iniciada, resultado pendiente.": "Simulación: ejecución iniciada.",
+    "Simulación local: detención solicitada.": "Simulación: detención solicitada.",
+    "Simulación local: detención registrada.": "Simulación: detenida.",
+    "Simulación local: resultado sintético registrado.": "Simulación: resultado sintético registrado.",
+    "Simulación local: fallo registrado.": "Simulación: fallo registrado.",
+    "Simulación local: resultado incierto; requiere revisión.": "Simulación: revisión pendiente.",
+    "Cola simulada: solicitud creada.": "Cola: solicitud simulada creada.",
+    "Cola simulada: espera previa a la apertura.": "Cola: espera previa registrada.",
+    "Cola simulada: solicitud en espera.": "Cola: espera registrada.",
+    "Cola simulada: admisión local registrada.": "Cola: admisión simulada registrada.",
+    "Cola simulada: solicitud cerrada.": "Cola: cierre simulado registrado.",
+    "Cola simulada: solicitud cancelada.": "Cola: cancelación simulada registrada.",
+    "Cola simulada: plazo local agotado.": "Cola: plazo simulado agotado.",
+    "Cola simulada: ejecución interrumpida.": "Cola: simulación interrumpida.",
+    "Worker: detección automática en curso.": "Worker: comprobación iniciada.",
+    "Worker: observación automática recibida; consulte el estado de evento y cola.": "Worker: observación recibida.",
+    "La página informa ausencia de eventos; finaliza la comprobación automática.": "Evento: ausente según la última observación.",
+    "La página informa cola inactiva; finaliza la comprobación automática.": "Cola virtual: inactiva según la última observación.",
+    "La comprobación automática requiere revisión; no equivale a ausencia de evento.": "Worker: comprobación requiere revisión.",
+    "Boca: autenticación del socio seleccionado en curso.": "Boca: autenticación en curso.",
+    "Boca: respuesta recibida; tokens en el monitor privado, sin validar compra.": "Boca: respuesta observada; valores privados.",
+    "Boca: autenticación no disponible o no verificable; ciclo finalizado.": "Boca: autenticación no verificable.",
+    "Worker: comprobando evento y cola virtual de la sesión del titular.": "Worker: comprobando evento y cola.",
+    "Evento detectado: cola virtual activa; observando la misma sesión.": "Cola virtual: activa según la última observación.",
+    "Evento anunciado: prefila observada; esperando la apertura.": "Evento: prefila observada.",
+    "Cola virtual inactiva según la página recibida; comprobación finalizada.": "Cola virtual: inactiva según la comprobación.",
+    "La página informa que no hay eventos disponibles; comprobación finalizada.": "Evento: no observado según la última comprobación.",
+    "Enlace de acceso con token recibido; disponible en el monitor privado, sin validar compra.": "Evento: señal de acceso observada; valor privado.",
+    "La página requiere intervención; comprobación finalizada sin eludir el bloqueo.": "Worker: intervención requerida; comprobación terminada.",
+    "Página sin señales suficientes para determinar evento o cola; comprobación finalizada.": "Evento y cola: estado no verificable.",
+    "No se pudo completar la consulta de evento y cola; comprobación finalizada.": "Evento y cola: consulta interrumpida.",
+}
+
+
+def guest_activity_label(message: object) -> str:
+    """Map known private observations to independent public strings only."""
+    if not isinstance(message, str):
+        return "Actividad local observada; detalle no disponible."
+    return _GUEST_PUBLIC_LABELS.get(message, "Actividad local observada; detalle no disponible.")
+
 
 def record_simulation_queue_stage(
     database: Database, *, command_id: str, snapshot: QueueSnapshot, at: datetime
