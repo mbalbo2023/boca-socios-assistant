@@ -24,16 +24,7 @@ PRIMARY_LINKS = (
     ("/control/actividad", "Actividad"),
     ("/configuracion", "Configuración"),
 )
-SECONDARY_LINKS = (
-    ("/socios", "Socios"),
-    ("/comandos", "Simulación"),
-    ("/telegram", "Telegram"),
-    ("/estado", "Estado"),
-    ("/avisos", "Avisos"),
-    ("/avisos-oficiales", "Eventos oficiales"),
-    ("/monitor/tokens", "Monitor de tokens"),
-)
-WIDTHS = (412, 800)
+VIEWPORTS = ((412, 915), (800, 1280), (1536, 960), (800, 820))
 
 
 def allow_boca_qa_request(url: str, method: str, origin: str, *, owner: bool) -> bool:
@@ -190,7 +181,11 @@ def _inspect_owner(page, origin: str) -> None:
     assert response is not None and response.status == 200
     assert page.locator('form[method="post"]').count() > 0
     _visible_focusable_navigation(page, "Principal", PRIMARY_LINKS)
-    _visible_focusable_navigation(page, "Otras funciones", SECONDARY_LINKS)
+    assert page.get_by_role("navigation").count() == 1
+    assert page.locator('nav a[aria-current="page"]').get_attribute("href") == "/control"
+    for engine in ("queues_tokens", "browsers_members"):
+        for action in ("start", "stop"):
+            assert page.locator(f"#{engine}-{action}-button").is_visible()
     _no_horizontal_overflow(page)
 
 
@@ -206,11 +201,11 @@ def run(phase: list[str]) -> bool:
                 channel="chrome", headless=True, args=["--disable-background-networking"]
             )
             try:
-                for width in WIDTHS:
+                for width, height in VIEWPORTS:
                     for owner in (False, True):
                         phase[0] = "OWNER_NAV" if owner else "GUEST_NAV"
                         context = browser.new_context(
-                            viewport={"width": width, "height": 820},
+                            viewport={"width": width, "height": height},
                             service_workers="block",
                             accept_downloads=False,
                             ignore_https_errors=False,
@@ -260,8 +255,8 @@ def main() -> int:
     print(
         "BOCA_GUEST_UX_PLAYWRIGHT "
         f"state={'PASS' if passed else 'NO_GO'} phase={category} "
-        "mode=OFFLINE_FIXTURE widths=412,800 "
-        "guest_routes=4 owner_primary=3 owner_other=7 owner_auth=WSGI_SYNTHETIC_ONLY "
+        "mode=OFFLINE_FIXTURE widths=412,800,1536 "
+        "guest_routes=4 owner_primary=3 owner_other=0 owner_auth=WSGI_SYNTHETIC_ONLY "
         "requests=LOCAL_GET_ONLY actions=0 screenshots=0 page_egress=ROUTE_DENIED"
     )
     return 0 if passed else 2

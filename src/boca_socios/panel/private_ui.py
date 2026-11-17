@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from html import escape
@@ -14,7 +15,7 @@ from boca_socios.domain.sector_preferences import SectorPreference
 from boca_socios.events.official_catalog import OfficialNotice
 from boca_socios.events.official_presentation import render_observed_catalog_html
 from boca_socios.notify.projection import LocalNoticeView, TelegramAdminSnapshot
-from boca_socios.panel import private_token_view
+from boca_socios.panel import engine_view, private_token_view
 from boca_socios.panel.enrollment_form import STYLE
 from boca_socios.panel.lifecycle_intents import LifecycleIntent
 from boca_socios.panel.member_sector_store import MemberSectorDefaults
@@ -67,6 +68,9 @@ button.addEventListener('click', async () => {
 
 _ACTIVITY_SCRIPT = (
     private_token_view.ART_TIME_SCRIPT
+    + "\nconst staleAdvisory = "
+    + json.dumps(engine_view._LIVE_WORKER_ADVISORY, ensure_ascii=False)
+    + ";\n"
     + """
 const list = document.getElementById('worker-events');
 const summary = document.getElementById('worker-activity-status');
@@ -80,6 +84,9 @@ const labels = {owner: 'Panel', host: 'Ejecutor',
 let paused = false;
 let pending = false;
 let lastEvents = '';
+function announceActivity(message) {
+  if (summary.textContent !== message) summary.textContent = message;
+}
 async function updateActivity() {
   if (pending) return;
   pending = true;
@@ -89,9 +96,12 @@ async function updateActivity() {
     if (!response.ok) throw new Error('status unavailable');
     const data = await response.json();
     if (!Array.isArray(data.events)) throw new Error('invalid activity');
-    const signature = JSON.stringify([data.events, data.chromium_telemetry]);
+    const isAdvisory = event => event.source === 'chromium' && event.level === 'warning' &&
+      event.message === staleAdvisory;
+    const events = data.events.filter(event => !isAdvisory(event));
+    const signature = JSON.stringify(events);
     if (lastEvents !== signature) {
-      const children = data.events.map((event) => {
+      const children = events.slice().reverse().map((event) => {
         const item = document.createElement('li');
         const when = formatPrivateTime(event.at);
         item.textContent = when + ' · ' + (labels[event.source] || 'Evento') +
@@ -104,14 +114,14 @@ async function updateActivity() {
         children.push(item);
       }
       list.replaceChildren(...children);
-      const latest = data.events.at(-1);
+      const latest = events.at(-1);
       observed.textContent = latest ? 'Último evento recibido: ' + formatPrivateTime(latest.at) :
         'Sin evento recibido; estado UNKNOWN.';
-      summary.textContent = latest ? 'Último evento: ' + latest.message :
-        'Sin eventos registrados.';
+      announceActivity(latest ? 'Último evento: ' + latest.message : 'Sin eventos registrados.');
       lastEvents = signature;
     }
-    telemetry.textContent = data.chromium_telemetry === 'available' ?
+    telemetry.textContent = data.events.some(isAdvisory) ? staleAdvisory :
+      data.chromium_telemetry === 'available' ?
       'Etapas de Chromium disponibles (sin texto interno de la página).' :
       data.chromium_telemetry === 'missing' ?
       'Chromium todavía no emitió etapas de actividad.' :
@@ -120,7 +130,7 @@ async function updateActivity() {
       formatPrivateTime(data.observed_at);
   } catch (_) {
     telemetry.textContent = 'No se pudo consultar la actividad. Revise su sesión.';
-    summary.textContent = 'Estado actual no verificable; los eventos anteriores son históricos.';
+    announceActivity('Estado actual no verificable; los eventos anteriores son históricos.');
     refreshed.textContent = 'Última consulta fallida; no se confirma actividad reciente.';
     // A later successful fetch must replace the stale summary even when the
     // worker's event list is byte-for-byte the same as before the failure.
@@ -158,6 +168,18 @@ CSP = (
 )
 
 
+def _navigation(current: str) -> str:
+    links = []
+    for path, label in (
+        ("/control", "Control"),
+        ("/control/actividad", "Actividad"),
+        ("/configuracion", "Configuración"),
+    ):
+        selected = ' aria-current="page"' if path == current else ""
+        links.append(f'<a href="{path}"{selected}>{label}</a>')
+    return '<nav aria-label="Principal">' + "".join(links) + "</nav>"
+
+
 def _page(
     title: str,
     content: str,
@@ -165,23 +187,11 @@ def _page(
     body_attributes: str = "",
     script: str = "",
     private_navigation: bool = True,
+    current: str = "/configuracion",
 ) -> bytes:
-    navigation = (
-        '<nav aria-label="Principal"><a href="/control">Control</a> · '
-        '<a href="/control/colas">Motor A · Colas y tokens</a> · '
-        '<a href="/control/socios">Motor B · Socios</a> · '
-        '<a href="/telegram">Telegram</a> · '
-        '<a href="/configuracion">Configuración</a></nav>'
-        '<nav aria-label="Otras funciones">'
-        "<strong>Otras funciones:</strong> "
-        '<a href="/control/actividad">Actividad global</a> · '
-        '<a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> · '
-        '<a href="/estado">Estado</a> · '
-        '<a href="/avisos">Avisos</a> · <a href="/avisos-oficiales">Eventos oficiales</a> · '
-        '<a href="/monitor/tokens">Monitor de tokens</a></nav>'
-        if private_navigation
-        else ""
-    )
+    navigation = _navigation(current) if private_navigation else ""
+    if private_navigation:
+        body_attributes = ' class="dashboard"' + body_attributes
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(title)} · Boca Socios Assistant</title><style>{STYLE}</style></head>
@@ -215,13 +225,12 @@ def _guest_page(title: str, content: str) -> bytes:
     }[title]
     return _page(
         title,
-        '<nav aria-label="Principal"><a href="/control">Control</a> · '
-        '<a href="/control/actividad">Actividad</a> · '
-        '<a href="/configuracion">Configuración</a></nav>'
-        "<p>Diagnóstico de lectura. Para iniciar o detener motores, use la sesión del dueño.</p>"
+        _navigation(refresh_path)
+        + "<p>Diagnóstico de lectura. Para iniciar o detener motores, use la sesión del dueño.</p>"
         '<p><a href="/ingresar">Ingresar para operar motores y editar configuración</a></p>'
         f'<p><a href="{refresh_path}">Actualizar estado</a> (consulta GET bajo demanda).</p>'
         + content,
+        body_attributes=' class="dashboard"',
         private_navigation=False,
     )
 
@@ -327,8 +336,6 @@ def observed_url_reveal(url: str) -> bytes:
 
 
 def engine_session_details(details: PrivateSessionDetails, csrf: str, operation_id: str) -> bytes:
-    from boca_socios.panel import engine_view
-
     identity, observation, inspection = details.identity, details.observation, details.inspection
     kinds = []
     if inspection is not None and inspection.final_url:
@@ -398,7 +405,8 @@ def engine_session_details(details: PrivateSessionDetails, csrf: str, operation_
         + ("" if kinds else "<p>Todavía no hay URL ni tokens observados para copiar.</p>")
         + "<p>Los tokens observados no acreditan una entrada. La autenticación en la página "
         "permanece sin confirmar mientras falte esa evidencia.</p>"
-        '<p><a href="/control">Ver las sesiones en vivo</a></p>',
+        '<p><a href="/control/actividad">Volver a la actividad de las sesiones</a></p>',
+        current="/control/actividad",
     )
 
 
@@ -433,7 +441,16 @@ def site_url_configuration(csrf: str, operation_id: str, site_url: str | None) -
         + 'autocomplete="off" spellcheck="false" maxlength="512" required>'
         + '<p><button type="submit">Guardar SITE_URL</button></p></form>'
         + "<p>Guardar no inicia ni detiene el worker. En la simulación local, "
-        + "SITE_URL no se visita; no hay login, cola ni reserva en Boca.</p>",
+        + "SITE_URL no se visita; no hay login, cola ni reserva en Boca.</p>"
+        '<section><h2>Telegram</h2><p><a href="/telegram/configurar">Configurar Telegram: token y Chat ID</a> · '
+        '<a href="/telegram">Ver estado de Telegram</a></p>'
+        "<p>Guardar los datos no instala la configuración ni activa los envíos.</p></section>"
+        '<section><h2>Socios</h2><p><a href="/socios">Ver o editar socios</a> · '
+        '<a href="/socios/nuevo">Agregar socio</a></p></section>'
+        "<details><summary>Más herramientas</summary><ul>"
+        '<li><a href="/comandos">Simulación</a></li><li><a href="/estado">Estado local</a></li>'
+        '<li><a href="/avisos">Avisos</a></li><li><a href="/avisos-oficiales">Eventos oficiales</a></li>'
+        '<li><a href="/monitor/tokens">Monitor de tokens</a></li></ul></details>',
     )
 
 
@@ -489,6 +506,7 @@ def home(
         '<form action="/salir" method="post">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         '<button type="submit">Cerrar sesión</button></form>',
+        current="/control",
     )
 
 
@@ -535,6 +553,7 @@ def global_simulation_control(
         f'<button type="submit">{label}</button></form>'
         '<p><a href="/comandos">Consultar simulaciones y detener una en curso</a></p>'
         + _lifecycle_controls(lifecycle, csrf, operation_id),
+        current="/control",
     )
 
 
@@ -612,6 +631,7 @@ def bot_control(
             auth_members=auth_members,
             selected_auth_member=selected_auth_member,
         ),
+        current="/control",
     )
 
 
@@ -622,8 +642,6 @@ def worker_activity(
     members: tuple[MemberView, ...] = (),
 ) -> bytes:
     """Read-only engine observations and the existing fixed, redacted timeline."""
-    from boca_socios.panel import engine_view
-
     engines = (
         engine_view.activity_content(engine_snapshot, members)
         if engine_snapshot is not None
@@ -634,48 +652,54 @@ def worker_activity(
         if engine_snapshot is not None
         else ""
     )
+    events = tuple(
+        event
+        for event in snapshot.events
+        if (event.source, event.level, event.message)
+        != ("chromium", "warning", engine_view._LIVE_WORKER_ADVISORY)
+    )
+    latest = events[-1] if events else None
     rows = "".join(
         "<li>"
         + escape(engine_view._time(item.at))
         + " · "
-        + escape(item.source)
+        + escape(engine_view._LIVE_SOURCE.get(item.source, "Evento"))
         + " · "
         + escape(item.message)
         + "</li>"
-        for item in snapshot.events
+        for item in reversed(events)
     )
     health = {
         "available": "Etapas reportadas por Chromium disponibles.",
         "missing": "Chromium todavía no emitió etapas de actividad.",
         "degraded": "Telemetría de Chromium no verificable; consultar estado protegido.",
     }[snapshot.chromium_telemetry]
+    if len(events) != len(snapshot.events):
+        health += " " + engine_view._LIVE_WORKER_ADVISORY
     return _page(
         "Actividad",
-        "<h1>Actividad</h1>" + engines + "<h2>Actividad del worker y Chromium</h2>"
-        "<p>Eventos comprobables de inicio, ejecución y cierre, actualizados cada cinco segundos "
-        "mientras esta pantalla está visible. No es una consola Docker ni muestra credenciales, "
-        "datos de socios o pasos internos de una web real en este registro.</p>"
-        "<p>Los recibos del ejecutor acreditan sólo el momento en que fueron emitidos; "
-        "las etapas de Chromium son señales del proceso aislado, no pruebas de salud del host.</p>"
-        f'<p id="chromium-telemetry-status">{escape(health)}</p>'
+        "<h1>Actividad</h1><h2>Actividad del worker y Chromium</h2>"
+        "<p>Registro compartido por ambos motores. Se consulta cada cinco segundos.</p>"
+        '<p id="worker-activity-status" role="status" aria-live="polite">'
+        + ("Último evento: " + escape(latest.message) if latest else "Sin eventos registrados.")
+        + '</p><p id="worker-activity-observed">Último evento recibido: '
+        + (
+            escape(engine_view._time(latest.at))
+            if latest
+            else "Sin evento recibido; estado UNKNOWN."
+        )
+        + '</p><p id="worker-activity-refreshed">Consulta inicial: '
+        + escape(engine_view._time(snapshot.observed_at))
+        + '</p><ol id="worker-events" tabindex="0" aria-label="Eventos recientes" aria-live="off">'
+        + (rows or "<li>Todavía no hay eventos registrados.</li>")
+        + f'</ol><p id="chromium-telemetry-status">{escape(health)}</p>'
         '<button id="worker-activity-refresh" type="button">Actualizar ahora</button>'
         '<button id="worker-activity-toggle" type="button" aria-pressed="false">'
         "Pausar actualizaciones del registro</button>"
-        '<p id="worker-activity-refreshed">Consulta inicial: '
-        + escape(engine_view._time(snapshot.observed_at))
-        + '</p><p id="worker-activity-observed">Último evento recibido: '
-        + escape(
-            engine_view._time(snapshot.events[-1].at)
-            if snapshot.events
-            else "Sin evento recibido; estado UNKNOWN."
-        )
-        + "</p>"
-        '<p id="worker-activity-status" role="status" aria-live="polite">'
-        "Actividad cargada.</p>"
-        '<ol id="worker-events" aria-label="Eventos recientes" aria-live="off">'
-        + (rows or "<li>Todavía no hay eventos registrados.</li>")
-        + "</ol><noscript>Actualice esta página para consultar los eventos nuevos.</noscript>"
-        '<p><a href="/control">Volver al control del bot</a></p>',
+        "<noscript>Actualice esta página para consultar los eventos nuevos.</noscript>"
+        + engines
+        + '<p><a href="/control">Volver al control del bot</a></p>',
+        current="/control/actividad",
         script=engine_script + f"<script>{_ACTIVITY_SCRIPT}</script>",
     )
 

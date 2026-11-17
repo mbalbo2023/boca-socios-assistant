@@ -238,7 +238,7 @@ def test_telegram_navigation_reuses_existing_private_routes(database_path: Path)
     rendered = _render(_load(database_path))
     for route in ("/telegram/configurar", "/telegram/emparejar", "/avisos"):
         assert f'href="{route}"' in rendered
-    assert '<a href="/telegram">Telegram</a>' in private_ui.home("fixture").decode()
+    assert 'href="/telegram"' in private_ui.home("fixture").decode()
     assert '<a href="/telegram">Telegram</a>' in telegram_setup_ui.page().decode()
     pairing = telegram_setup_ui.pairing_page().decode()
     assert '<a href="/telegram">Telegram</a>' in pairing

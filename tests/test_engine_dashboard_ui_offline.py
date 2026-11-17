@@ -91,7 +91,22 @@ def test_fixed_fixture_uses_actual_renderer_and_ignores_runtime_environment(monk
     monkeypatch.setenv("BOCA_SITE_URL", "https://must-not-contact.invalid/private")
     monkeypatch.setenv("BOCA_OWNER_SUBJECT", "must-not-appear-in-artifact")
     assert module.make_fixture(SOURCE_SHA) == fixture
-    assert fixture["html"] == rendered[0].decode("utf-8")
+    assert fixture["schema"] == 4
+    script = fixture["control_script"]
+    documents = [fixture, *fixture["redirect_documents"]]
+    assert len(rendered[:5]) == len(documents) == 5
+    for expected, document in zip(rendered[:5], documents, strict=True):
+        assert document["html"].count("<!--offline-control-script-->") == 1
+        assert script not in document["html"]
+        assert (
+            document["html"]
+            .replace("<!--offline-control-script-->", f"<script>{script}</script>")
+            .encode()
+            == expected
+        )
+        assert document["html_sha256"] == hashlib.sha256(expected).hexdigest()
+    assert script not in fixture["activity_document"]["html"]
+    assert fixture["control_script_sha256"] == hashlib.sha256(script.encode()).hexdigest()
     assert fixture["csp"] == engine_view.csp()
     assert fixture["html_sha256"] == hashlib.sha256(rendered[0]).hexdigest()
     assert "must-not-" not in json.dumps(fixture)
@@ -133,7 +148,7 @@ def test_activity_fixture_has_real_readonly_renderer_and_separate_bounded_gets()
     snapshot = _http_exchange(module, service, _request(path="/control/motores.json"))
     assert b'"session_id":"00000000-0000-4000-8000-000000000302"' in snapshot
     assert service.counters()["activity_documents"] == 1
-    assert len(module._json(fixture)) <= 170_000
+    assert len(module._json(fixture)) + 1 <= 170_000
     repeated = _http_exchange(module, service, _request(path="/control/actividad"))
     assert not repeated.startswith(b"HTTP/1.0 200 ")
 
@@ -150,6 +165,15 @@ def test_activity_fixture_has_real_readonly_renderer_and_separate_bounded_gets()
         "fixture_size",
         "extra",
         "old_schema",
+        "v3",
+        "script",
+        "script_digest",
+        "slot_missing",
+        "slot_twice",
+        "injected_slot",
+        "csp_script",
+        "expanded_overflow",
+        "trailing_newline_overflow",
         "activity_html",
         "activity_phase",
         "activity_extra",
@@ -176,6 +200,41 @@ def test_fixture_rejects_source_drift_private_metadata_and_unreviewed_inputs(cha
         fixture["html_sha256"] = hashlib.sha256(fixture["html"].encode()).hexdigest()
     elif change == "old_schema":
         fixture["schema"] = 2
+    elif change == "v3":
+        fixture["schema"] = 3
+    elif change == "script":
+        fixture["control_script"] += " "
+    elif change == "script_digest":
+        fixture["control_script_sha256"] = "0" * 64
+    elif change in ("slot_missing", "slot_twice"):
+        marker = "<!--offline-control-script-->"
+        document = fixture["redirect_documents"][0]
+        document["html"] = document["html"].replace(
+            marker, "" if change == "slot_missing" else marker * 2
+        )
+    elif change == "injected_slot":
+        fixture["activity_document"]["html"] += "<!--offline-control-script-->"
+        fixture["activity_document"]["html_sha256"] = hashlib.sha256(
+            fixture["activity_document"]["html"].encode()
+        ).hexdigest()
+    elif change == "csp_script":
+        digest = base64.b64encode(
+            hashlib.sha256(fixture["control_script"].encode()).digest()
+        ).decode()
+        fixture["csp"] = fixture["csp"].replace(digest, "wrong")
+    elif change == "expanded_overflow":
+        document = fixture["redirect_documents"][0]
+        html = document["html"].replace(
+            "<!--offline-control-script-->", "<script>" + fixture["control_script"] + "</script>"
+        )
+        padding = " " * (100_001 - len(html.encode()))
+        document["html"] += padding
+        document["html_sha256"] = hashlib.sha256((html + padding).encode()).hexdigest()
+    elif change == "trailing_newline_overflow":
+        document = fixture["activity_document"]
+        document["html"] += " " * (170_000 - len(module._json(fixture)))
+        document["html_sha256"] = hashlib.sha256(document["html"].encode()).hexdigest()
+        assert len(module._json(fixture)) == 170_000 and len(document["html"].encode()) <= 100_000
     elif change == "activity_html":
         fixture["activity_document"]["html"] += "<p>unreviewed</p>"
     elif change == "activity_phase":
@@ -500,7 +559,7 @@ def test_http_fixture_models_all_native_redirects_and_preserves_poll_document():
     service = module._FixtureService(fixture)
     initial = _http_exchange(module, service, _request())
     assert initial.startswith(b"HTTP/1.0 200 ")
-    assert fixture["html"].encode() in initial
+    assert hashlib.sha256(initial.split(b"\r\n\r\n", 1)[1]).hexdigest() == fixture["html_sha256"]
     assert fixture["csp"].encode() in initial
     assert b"Referrer-Policy: same-origin\r\n" in initial
     for number, operation in enumerate(module.POST_ORDER, 1):
@@ -530,7 +589,10 @@ def test_http_fixture_models_all_native_redirects_and_preserves_poll_document():
         assert response.endswith(b"\r\n\r\n")
         document = _http_exchange(module, service, _request())
         assert document.startswith(b"HTTP/1.0 200 ")
-        assert fixture["redirect_documents"][number - 1]["html"].encode() in document
+        assert (
+            hashlib.sha256(document.split(b"\r\n\r\n", 1)[1]).hexdigest()
+            == fixture["redirect_documents"][number - 1]["html_sha256"]
+        )
         assert service.counters()["documents"] == number + 1
     assert service.counters() == {
         "snapshot_phase": 5,
@@ -541,7 +603,7 @@ def test_http_fixture_models_all_native_redirects_and_preserves_poll_document():
         "activity_documents": 0,
         "activity_snapshots": 0,
     }
-    assert len(module._json(fixture)) <= 170_000
+    assert len(module._json(fixture)) + 1 <= 170_000
     assert len(fixture["snapshots"]) == 6
     assert fixture["snapshots"][1]["engines"][0]["state"] == "RUNNING"
     assert fixture["snapshots"][1]["engines"][1]["state"] == "STOPPED"

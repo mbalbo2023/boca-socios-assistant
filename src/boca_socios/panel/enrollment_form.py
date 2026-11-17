@@ -6,6 +6,16 @@ from html import escape
 
 STYLE = """
 body { font: 1.1rem system-ui; max-width: 42rem; margin: auto; padding: 1.5rem; }
+[hidden] { display: none !important; }
+body.dashboard { max-width: 75rem; padding: clamp(.75rem, 2vw, 1.5rem); overflow-wrap: anywhere; }
+.dashboard nav[aria-label="Principal"] { display: grid; grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: .35rem; margin-bottom: .75rem; }
+.dashboard nav[aria-label="Principal"] a { display: grid; place-items: center;
+  text-align: center; box-sizing: border-box; padding: .35rem; border: 1px solid #62748a;
+  border-radius: .45rem; color: #17385c; }
+.dashboard nav a[aria-current="page"] { background: #17385c; color: white; font-weight: 700; }
+.dashboard summary { box-sizing: border-box; min-height: 52px; padding-block: .6rem; cursor: pointer; }
+.dashboard #worker-events { max-height: 16rem; overflow-y: auto; }
 label { display: block; margin-top: 1.2rem; }
 input:not([type=checkbox]), button, select { box-sizing: border-box; width: 100%;
   min-height: 52px; padding: .7rem; font: inherit; }

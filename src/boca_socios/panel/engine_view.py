@@ -177,6 +177,9 @@ _LIVE_ERRORS = {
         "CHECK_FAILED",
     )
 }
+_UNCONFIRMED_OPEN = (
+    "No se confirmó la apertura del navegador. No hay una inspección de página acreditada."
+)
 _LIVE_SOURCE = {
     "owner": "Panel",
     "host": "Ejecutor",
@@ -206,6 +209,12 @@ _STYLE = """
 summary { min-height: 52px; padding-block: .5rem; cursor: pointer; box-sizing: border-box; }
 [data-engine] { border: 1px solid #aab4c1; border-radius: .5rem;
   padding: 1rem; margin-block: 1.5rem; }
+.motor-panels { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,21rem),1fr));
+  gap: .75rem; align-items: start; }
+.motor-panels > section { min-width: 0; margin-block: .25rem; }
+.motor-panels dl { margin: .5rem 0; }
+.motor-panels dt { font-weight: 650; }
+.motor-panels dd { margin: 0 0 .35rem; }
 .engine-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem 1rem; }
 .engine-metrics dt, .engine-session dt { font-weight: 600; }
 .engine-metrics dd { margin: 0; }
@@ -221,7 +230,7 @@ summary { min-height: 52px; padding-block: .5rem; cursor: pointer; box-sizing: b
   gap: .25rem .65rem; }
 .engine-live-card dt { font-weight: 650; }
 .engine-live-card dd { margin: 0 0 .2rem; }
-.engine-live-card a:not([hidden]) { display: inline-flex; align-items: center; min-height: 44px; }
+.engine-live-card a:not([hidden]) { display: inline-flex; align-items: center; min-height: 52px; }
 .engine-live-card a:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .engine-live-records { padding-inline-start: 1.35rem; }
 """
@@ -236,6 +245,8 @@ _ENGINE_CONSTANTS = (
     + json.dumps(_STATES, ensure_ascii=False)
     + ";\nconst phaseNames = "
     + json.dumps(_PHASES, ensure_ascii=False)
+    + ";\nconst aggregateNoEvent = "
+    + json.dumps(_LIVE_PHASE["NO_EVENT_OBSERVED"], ensure_ascii=False)
     + ";\nconst metricNames = "
     + json.dumps(_METRICS, ensure_ascii=False)
     + ";\nconst legacyRecoveryLabels = "
@@ -257,6 +268,7 @@ _LIVE_CONSTANTS = (
             "events": _LIVE_EVENT,
             "queues": _LIVE_QUEUE,
             "errors": _LIVE_ERRORS,
+            "unconfirmedOpen": _UNCONFIRMED_OPEN,
             "sources": _LIVE_SOURCE,
             "workerLabels": _LIVE_WORKER_LABELS,
             "workerAdvisory": _LIVE_WORKER_ADVISORY,
@@ -426,7 +438,8 @@ _POLL_END = """
   function updateEngine(item) {
     const engine = item.engine;
     setText(document.getElementById(engine + '-state'), state(item.state));
-    setText(document.getElementById(engine + '-phase'), phase(item.phase));
+    setText(document.getElementById(engine + '-phase'), item.phase === 'NO_EVENT_OBSERVED' ?
+      aggregateNoEvent : Object.hasOwn(phaseNames, item.phase) ? phaseNames[item.phase] : 'Etapa sin verificar');
     setText(document.getElementById(engine + '-updated'), item.updated_at ?
       formatPrivateTime(item.updated_at) : 'Sin observación');
     for (const name of Object.keys(metricNames)) {
@@ -542,14 +555,8 @@ _POLL_TRIGGER = """
   if (!document.hidden) refreshPage();
 })();
 """
-_LIVE_MOTOR_SCRIPT = r"""
-  const motor = Object.keys(engineNames).find(name =>
-    document.getElementById(name + '-live-card'));
-  const card = field => document.getElementById(motor + '-live-' + field);
-  const put = (field, value) => setText(card(field), value);
+_LIVE_PROJECTION_SCRIPT = r"""
   const known = (labels, code) => typeof code === 'string' && Object.hasOwn(labels, code);
-  const workerLabels = new Set(liveLabels.workerLabels);
-  let activityPending = false;
   function stamp(value) {
     return typeof value === 'string' &&
       /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|[+-]\d\d:\d\d)$/.test(value)
@@ -560,7 +567,8 @@ _LIVE_MOTOR_SCRIPT = r"""
     let targetCount = 0, authCount = 0, authenticating = 0, domUnverified = 0;
     const events = new Map(), queues = new Map();
     const phase = known(liveLabels.phases, item.phase) ? liveLabels.phases[item.phase] : 'Etapa sin verificar';
-    let error = known(liveLabels.errors, item.phase) ? phase : '';
+    let error = item.phase === 'WORKER_RECEIPT_UNVERIFIED' && item.created === 0 ?
+      liveLabels.unconfirmedOpen : known(liveLabels.errors, item.phase) ? phase : '';
     item.sessions.forEach((session, index) => {
       if (!uuid.test(session.session_id)) return;
       if (!error && known(liveLabels.errors, session.phase)) error = liveLabels.errors[session.phase];
@@ -624,7 +632,9 @@ _LIVE_MOTOR_SCRIPT = r"""
       error: error || 'Sin bloqueo informado', revealed
     };
   }
-  function updateMotorCard(data) {
+  function updateMotorCard(motor, data) {
+    const card = field => document.getElementById(motor + '-live-' + field);
+    const put = (field, value) => setText(card(field), value);
     if (data === undefined) return; // The existing motor request is still pending.
     const item = data && stamp(data.observed_at) && data.engines.find(entry => entry.engine === motor);
     if (!item) {
@@ -634,13 +644,13 @@ _LIVE_MOTOR_SCRIPT = r"""
     const {revealed, ...fields} = projection(item);
     for (const [field, value] of Object.entries(fields)) put(field, value);
     const link = card('inspect');
-    if (revealed) {
+    if (link && revealed) {
       if (link.dataset.sessionId !== revealed) {
         link.href = '/control/sesiones/' + revealed;
         link.dataset.sessionId = revealed;
       }
       if (link.hidden) link.hidden = false;
-    } else if (!link.hidden) {
+    } else if (link && !link.hidden) {
       link.hidden = true;
       link.href = '';
       delete link.dataset.sessionId;
@@ -648,6 +658,14 @@ _LIVE_MOTOR_SCRIPT = r"""
     put('motor-query', formatPrivateTime(data.observed_at));
     put('motor-status', 'Consulta del motor disponible.');
   }
+"""
+_LIVE_MOTOR_SCRIPT = """
+  const motor = Object.keys(engineNames).find(name =>
+    document.getElementById(name + '-live-card'));
+  const card = field => document.getElementById(motor + '-live-' + field);
+  const put = (field, value) => setText(card(field), value);
+  const workerLabels = new Set(liveLabels.workerLabels);
+  let activityPending = false;
   async function refreshWorkerFeed() {
     if (activityPending) return;
     activityPending = true;
@@ -684,7 +702,7 @@ _LIVE_MOTOR_SCRIPT = r"""
     } finally { activityPending = false; }
   }
   async function refreshPage() {
-    await Promise.all([refreshEngines().then(updateMotorCard), refreshWorkerFeed()]);
+    await Promise.all([refreshEngines().then(data => updateMotorCard(motor, data)), refreshWorkerFeed()]);
   }
 """
 _MOTOR_BODY = (
@@ -702,16 +720,21 @@ _MOTOR_SCRIPT = (
     + _EVIDENCE_CONSTANTS
     + _LIVE_CONSTANTS
     + _MOTOR_BODY
+    + _LIVE_PROJECTION_SCRIPT
     + _LIVE_MOTOR_SCRIPT
     + _POLL_TRIGGER
 )
 _CONTROL_SCRIPT = (
     _ENGINE_CONSTANTS
+    + _LIVE_CONSTANTS
+    + _EVIDENCE_CONSTANTS
     + _POLL_START
     + _EMPTY_ENGINE_SCRIPT
     + "function updateSessions() {}\n"
     + _POLL_END
-    + "const refreshPage = refreshEngines;\n"
+    + _LIVE_PROJECTION_SCRIPT
+    + "async function refreshPage() { const data = await refreshEngines(); "
+    + "for (const motor of Object.keys(engineNames)) updateMotorCard(motor, data); }\n"
     + _POLL_TRIGGER
 )
 # Each native redirect includes this script; omit indentation in the emitted bytes.
@@ -1068,6 +1091,8 @@ def _live_projection(item: Mapping[str, object]) -> tuple[dict[str, str], str | 
     phase = str(item.get("phase"))
     state = str(item.get("state"))
     error = _LIVE_ERRORS.get(phase)
+    if phase == "WORKER_RECEIPT_UNVERIFIED" and item.get("created") == 0:
+        error = _UNCONFIRMED_OPEN
     for index, session in enumerate(_entries(item.get("sessions")), 1):
         session_id = _uuid(session.get("session_id"))
         if session_id is None:
@@ -1231,6 +1256,7 @@ def _section(
     site_url_ready: bool,
     *,
     controls: bool = True,
+    summary: bool = False,
 ) -> str:
     state = escape(_STATES.get(str(item.get("state")), "Estado desconocido"))
     metrics = "".join(
@@ -1266,10 +1292,11 @@ def _section(
         f'<h2 id="{engine}-heading">Motor {"A" if engine == "queues_tokens" else "B"}: {_ENGINES[engine]}</h2>'
         f'<p>Estado observado: <strong id="{engine}-state">{state}</strong></p>'
         f'<p>Etapa: <span id="{engine}-phase">'
-        + escape(_PHASES.get(str(item.get("phase")), _text(item.get("phase"))))
+        + escape(_LIVE_PHASE.get(str(item.get("phase")), "Etapa sin verificar"))
         + "</span><br>"
         f'Última observación: <span id="{engine}-updated">{_time(item.get("updated_at"))}</span></p>'
         + current_member
+        + (_compact_summary(engine, item) if summary else "")
         + (
             _forms(engine, item, csrf, operations, members, site_url_ready)
             if controls
@@ -1278,6 +1305,29 @@ def _section(
             f'<p>Distribución solicitada: <span id="{engine}-counts">{distribution}</span></p>'
         )
         + "</section>"
+    )
+
+
+def _compact_summary(engine: str, item: Mapping[str, object]) -> str:
+    values, _ = _live_projection(item)
+    prefix = f"{engine}-live-"
+    fields = {
+        "contexts": "Contextos",
+        "navigation": "Sitio",
+        "event": "Evento",
+        "queue": "Cola",
+        "tokens": "Tokens y enlaces",
+        "page-time": "Última observación de página",
+        "error": "Error o bloqueo",
+    }
+    rows = "".join(
+        f'<dt>{term}</dt><dd id="{prefix}{field}">{escape(values[field])}</dd>'
+        for field, term in fields.items()
+    )
+    letter = "A" if engine == "queues_tokens" else "B"
+    return (
+        f'<dl>{rows}</dl><p id="{prefix}motor-status" role="status"></p>'
+        f'<p><a href="/control/actividad#{engine}-heading">Ver actividad del motor {letter}</a></p>'
     )
 
 
@@ -1313,6 +1363,9 @@ def activity_content(snapshot: Mapping[str, object], members: tuple[MemberView, 
         )
         totals.append(f'{label}: <span id="engines-total-{field}">{total}</span>')
     content = (
+        '<p><a href="#queues_tokens-heading">Actividad del motor A</a> · '
+        '<a href="#browsers_members-heading">Actividad del motor B</a></p>'
+        "<details><summary>Datos técnicos de los motores</summary>"
         "<p>Dos motores lógicos comparten un worker físico. Estos estados no certifican "
         "por sí solos la salud de Docker. SIMULATION_ONLY; sin reservas reales.</p>"
         '<p>Límite conjunto de solicitudes: <span id="engines-limit">'
@@ -1323,17 +1376,16 @@ def activity_content(snapshot: Mapping[str, object], members: tuple[MemberView, 
         "<p>Una consulta reciente no es una observación nueva del worker. "
         "Arranque sin confirmar (WORKER_RECEIPT_UNVERIFIED) no significa ausencia de evento. "
         "URL configurada no acredita navegación.</p>"
-        + _poll_status(snapshot)
         + "<h2>Totales observados</h2><p>"
         + " · ".join(totals)
-        + "</p>"
-    )
-    content += "".join(
-        _section(name, item, "", {}, members, False, controls=False)
-        for name, item in engines.items()
+        + "</p></details>"
+        + _poll_status(snapshot)
     )
     content += "<h2>Sesiones observadas</h2>" + f"<p>{_SAMPLE_NOTICE}</p>"
-    content += "".join(_history(name, item) for name, item in engines.items())
+    content += "".join(
+        _section(name, item, "", {}, members, False, controls=False) + _history(name, item)
+        for name, item in engines.items()
+    )
     return content
 
 
@@ -1366,10 +1418,11 @@ def page(
     if not site_url_ready:
         content += '<p>Configure la URL de destino antes de iniciar. <a href="/configuracion">Abrir configuración</a></p>'
     content += _legacy_recovery(snapshot, csrf, operations)
-    content += "".join(
-        _section(name, item, csrf, operations, members, site_url_ready)
+    sections = "".join(
+        _section(name, item, csrf, operations, members, site_url_ready, summary=engine is None)
         for name, item in engines.items()
     )
+    content += sections if engine is not None else f'<div class="motor-panels">{sections}</div>'
     if engine is not None:
         item = engines[engine]
         content += (
@@ -1401,12 +1454,12 @@ def page(
             content += "<p>Reserva real y capturas terminales no están implementadas. No se confirma ninguna entrada.</p>"
         content += _history(engine, item)
     content += (
-        '<p><a href="/control/actividad">Ver sesiones, tokens y actividad observada</a></p>'
         "<noscript>La página conserva el estado de la última consulta. "
         "Recargue para consultar cambios; los formularios funcionan sin JavaScript.</noscript>"
     )
     return _page(
         title,
         content,
+        current="/control",
         script=f"<style>{_STYLE}</style><script>{_MOTOR_SCRIPT if engine else _CONTROL_SCRIPT}</script>",
     )
