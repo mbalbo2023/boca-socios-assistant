@@ -575,6 +575,7 @@ jobs:
           path: |
             ${{ runner.temp }}/boca-engine-ui-artifacts/engines-tablet-800x1280.png
             ${{ runner.temp }}/boca-engine-ui-artifacts/engines-mobile-412x915.png
+            ${{ runner.temp }}/boca-engine-ui-artifacts/engines-landscape-1536x960.png
             ${{ runner.temp }}/boca-engine-ui-artifacts/report.json
           if-no-files-found: error
           retention-days: 7

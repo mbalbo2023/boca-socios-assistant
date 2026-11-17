@@ -38,6 +38,7 @@ ENGINES = ("queues_tokens", "browsers_members")
 VIEWPORTS = (
     (800, 1280, "engines-tablet-800x1280.png"),
     (412, 915, "engines-mobile-412x915.png"),
+    (1536, 960, "engines-landscape-1536x960.png"),
 )
 POST_ORDER = (
     "queues_tokens:start",
@@ -65,6 +66,7 @@ _MAX_DOCUMENT = 100_000
 _MAX_CAPTURE = 6_000_000
 _MAX_PNG = 2_000_000
 _MAX_HEIGHT = 12_000
+_COLLAPSED_HEIGHT_LIMIT = {800: 3170, 412: 3412}
 _FAILURE_PHASES = frozenset(
     {
         "arguments",
@@ -154,6 +156,8 @@ _PROBE_STEPS = frozenset(
         "preserved_inputs_prepare",
         "live_rows_poll",
         "session_preserved",
+        "session_disclosure",
+        "disclosure_preserved",
         "live_projection",
         "live_projection_inputs",
         "live_projection_member",
@@ -1183,6 +1187,23 @@ async def _viewport(
         await page.locator("#queues_tokens-chromium").fill("19")
         await page.locator("#browsers_members-chromium").fill("11")
         await page.locator("#browsers_members-member").select_option(_MEMBERS[0])
+        step = "session_disclosure"
+        await activity.bring_to_front()
+        rows = activity.locator("li.engine-session[data-session-id]")
+        active_row = activity.locator(f'li.engine-session[data-session-id="{_identity(301)}"]')
+        disclosure = active_row.locator("details")
+        session_toggle = disclosure.locator("summary")
+        if (
+            await rows.count() != 2
+            or await rows.locator("details").count() != 2
+            or await rows.locator("details[open]").count() != 0
+            or await rows.locator('a[data-field="inspect"]:visible').count() != 2
+        ):
+            raise RuntimeError("live_snapshot_projection_unverified")
+        await session_toggle.focus()
+        await session_toggle.press("Enter")
+        if await disclosure.locator("dd[data-field]:visible").count() != 20:
+            raise RuntimeError("live_snapshot_projection_unverified")
         service.advance_poll()
         await _refresh(page)
         step = "live_rows_poll"
@@ -1197,6 +1218,21 @@ async def _viewport(
             or service.counters()["activity_documents"] != 1
         ):
             raise RuntimeError("existing_session_replaced")
+        step = "disclosure_preserved"
+        if (
+            not await session_toggle.evaluate("node => document.activeElement === node")
+            or await rows.locator("details").count() != 3
+            or await rows.locator("details[open]").count() != 1
+            or await disclosure.get_attribute("open") is None
+            or await rows.locator('a[data-field="inspect"]:visible').count() != 3
+        ):
+            raise RuntimeError("existing_session_replaced")
+        await session_toggle.press("Space")
+        if (
+            await rows.locator("details[open]").count()
+            or await disclosure.locator("dd:visible").count()
+        ):
+            raise RuntimeError("live_snapshot_projection_unverified")
         step = "live_projection"
         technical = activity.locator("details").filter(
             has=activity.get_by_text("Datos técnicos de los motores", exact=True)
@@ -1491,7 +1527,9 @@ def _png_dimensions(raw: bytes, width: int, minimum_height: int) -> tuple[int, i
             )
             if (
                 actual_width != width
-                or not minimum_height <= actual_height <= _MAX_HEIGHT
+                or not minimum_height
+                <= actual_height
+                <= _COLLAPSED_HEIGHT_LIMIT.get(width, _MAX_HEIGHT)
                 or depth != 8
                 or color not in (2, 6)
                 or (compression, filtering, interlace) != (0, 0, 0)
@@ -1541,7 +1579,7 @@ def write_artifacts(
         or capture["host_checked"] is not False
         or capture["physical_device_checked"] is not False
         or not isinstance(capture["viewports"], list)
-        or len(capture["viewports"]) != 2
+        or len(capture["viewports"]) != len(VIEWPORTS)
     ):
         raise ValueError("offline_capture_unverified")
     report = {key: value for key, value in capture.items() if key != "viewports"}
@@ -1595,7 +1633,7 @@ def write_artifacts(
             screenshot_sha256=hashlib.sha256(raw).hexdigest(),
         )
         report["viewports"].append(verified)
-    # No filesystem output is created before every field and both PNGs pass.
+    # No filesystem output is created before every field and every PNG passes.
     output.mkdir(mode=0o700)
     for filename, raw in [*images, ("report.json", _json(report) + b"\n")]:
         with (output / filename).open("xb") as stream:
@@ -1652,7 +1690,7 @@ def main(argv: list[str] | None = None) -> int:
             phase = "artifact_verify"
             write_artifacts(capture, fixture, argv[3], Path(argv[4]))
             print(
-                f"BOCA_ENGINE_UI_OFFLINE state=PASS source_sha={argv[3]} viewports=2 network=none host=UNTOUCHED device=UNVERIFIED"
+                f"BOCA_ENGINE_UI_OFFLINE state=PASS source_sha={argv[3]} viewports={len(VIEWPORTS)} network=none host=UNTOUCHED device=UNVERIFIED"
             )
         else:
             raise ValueError("explicit_offline_mode_required")

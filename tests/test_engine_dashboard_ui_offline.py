@@ -16,6 +16,7 @@ import subprocess
 import sys
 import types
 import zlib
+from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
@@ -1437,8 +1438,25 @@ def test_verified_capture_writes_only_bounded_named_pngs_and_public_report(tmp_p
     assert {path.name for path in destination.iterdir()} == {
         "engines-tablet-800x1280.png",
         "engines-mobile-412x915.png",
+        "engines-landscape-1536x960.png",
         "report.json",
     }
+    assert [(view["width"], view["height"]) for view in report["viewports"]] == [
+        (800, 1280),
+        (412, 915),
+        (1536, 960),
+    ]
+    upload = (
+        (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml")
+        .read_text()
+        .split("id: engine_ui_upload", 1)[1]
+        .split("if-no-files-found:", 1)[0]
+    )
+    assert [
+        line.strip().split("/boca-engine-ui-artifacts/")[1]
+        for line in upload.splitlines()
+        if "/boca-engine-ui-artifacts/" in line
+    ] == [view["screenshot"] for view in report["viewports"]] + ["report.json"]
     assert report["source_sha"] == SOURCE_SHA
     assert report["host_checked"] is report["physical_device_checked"] is False
     assert report["html_sha256"] == fixture["html_sha256"]
@@ -1461,6 +1479,11 @@ def test_verified_capture_writes_only_bounded_named_pngs_and_public_report(tmp_p
         "old_documents",
         "old_snapshots",
         "extra",
+        "missing_viewport",
+        "extra_viewport",
+        "reordered_viewport",
+        "tablet_too_tall",
+        "mobile_too_tall",
     ],
 )
 def test_capture_rejects_unproven_or_tampered_evidence_before_creating_artifacts(tmp_path, change):
@@ -1483,6 +1506,15 @@ def test_capture_rejects_unproven_or_tampered_evidence_before_creating_artifacts
         capture["viewports"][0]["document_requests"] = 5
     elif change == "old_snapshots":
         capture["viewports"][0]["snapshot_requests"] = 4
+    elif change == "missing_viewport":
+        capture["viewports"].pop()
+    elif change == "extra_viewport":
+        capture["viewports"].append(capture["viewports"][0])
+    elif change == "reordered_viewport":
+        capture["viewports"].reverse()
+    elif change in {"tablet_too_tall", "mobile_too_tall"}:
+        index, width, height = (0, 800, 3171) if change == "tablet_too_tall" else (1, 412, 3413)
+        capture["viewports"][index]["png_base64"] = base64.b64encode(_png(width, height)).decode()
     else:
         capture["viewports"][0]["screenshot"] = "../../escape.png"
     destination = tmp_path / "artifacts"

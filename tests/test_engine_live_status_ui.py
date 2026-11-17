@@ -135,8 +135,8 @@ function element(attrs={}, content='') {
     removeAttribute(name) { delete this[name]; },
     remove() {},
     querySelector(selector) {
-      const key = selector.match(/data-field="([^"]+)"/)[1];
-      const search = item => item.dataset.field === key ? item :
+      const [,summary,key] = selector.match(/data-(summary-)?field="([^"]+)"/);
+      const search = item => item.dataset[summary ? 'summaryField' : 'field'] === key ? item :
         item.children.map(search).find(Boolean);
       return search(this);
     },
