@@ -521,8 +521,13 @@ def test_owner_cookie_survives_controller_restart_and_logout_revokes_server_side
         )
         assert status == 200 and "Max-Age=0" in headers["Set-Cookie"]
         assert "Max-Age=34560000" not in headers["Set-Cookie"]
-        assert _request(app, "/", cookie=cookie)[0] == 401
-        assert _request(restarted, "/", cookie=cookie)[0] == 401
+        for panel in (app, restarted):
+            guest_status, guest_headers, guest_html = _request(panel, "/", cookie=cookie)
+            assert guest_status == 200 and guest_headers["Cache-Control"] == "no-store"
+            assert "Set-Cookie" not in guest_headers
+            assert b"<form" not in guest_html and b'name="csrf"' not in guest_html
+            # Revoked owner cookies may see only the public observer, not private data.
+            assert _request(panel, "/socios", cookie=cookie)[0] == 401
         with closing(sqlite3.connect(path.with_name("boca_owner_session.sqlite3"))) as connection:
             assert connection.execute("SELECT count(*) FROM owner_browser_session").fetchone() == (
                 0,
@@ -540,7 +545,10 @@ def test_global_intake_pause_resume_never_stops_http_or_existing_commands() -> N
             password="test-password",
             consent_recorded_at=datetime.now(UTC),
         )
-        assert _request(app, "/control")[0] == 401
+        guest_status, guest_headers, guest_html = _request(app, "/control")
+        assert guest_status == 200 and guest_headers["Cache-Control"] == "no-store"
+        assert "Set-Cookie" not in guest_headers
+        assert b"<form" not in guest_html and b'name="operation_id"' not in guest_html
         cookie = _login(app, key, credential_id)
         assert _request(app, "/", cookie=cookie)[0] == 200
         initial = _request(app, "/control", cookie=cookie)
@@ -623,13 +631,20 @@ def test_global_control_rejects_unauthorized_post_and_persists_idempotent_state(
             commands=FakeHost(),
             events={EVENT_ID: "Partido sintético"},
         )
-        assert _request(restarted, "/control")[0] == 401
+        guest_status, guest_headers, guest_html = _request(restarted, "/control")
+        assert guest_status == 200 and guest_headers["Cache-Control"] == "no-store"
+        assert "Set-Cookie" not in guest_headers
+        assert b"<form" not in guest_html and b'name="csrf"' not in guest_html
         clock[0] = 3.0
         restart_cookie = _login(restarted, next_key, next_credential)
         assert b"Admitiendo" in _request(restarted, "/control", cookie=restart_cookie)[2]
         assert _control_action(restarted, restart_cookie, "pausar")[0] == 303
         # A new verified passkey login replaces and revokes the old browser token.
-        assert _request(app, "/control", cookie=cookie)[0] == 401
+        revoked_status, revoked_headers, revoked_html = _request(app, "/control", cookie=cookie)
+        assert revoked_status == 200 and revoked_headers["Cache-Control"] == "no-store"
+        assert "Set-Cookie" not in revoked_headers
+        assert b"<form" not in revoked_html and b'name="operation_id"' not in revoked_html
+        assert _request(app, "/socios", cookie=cookie)[0] == 401
         assert b"Pausada" in _request(restarted, "/control", cookie=restart_cookie)[2]
         with db.connection() as connection:
             assert connection.execute(
