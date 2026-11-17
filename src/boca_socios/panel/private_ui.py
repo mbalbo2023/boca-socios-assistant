@@ -168,12 +168,15 @@ def _page(
 ) -> bytes:
     navigation = (
         '<nav aria-label="Principal"><a href="/control">Control</a> · '
-        '<a href="/control/actividad">Actividad</a> · '
+        '<a href="/control/colas">Motor A · Colas y tokens</a> · '
+        '<a href="/control/socios">Motor B · Socios</a> · '
+        '<a href="/telegram">Telegram</a> · '
         '<a href="/configuracion">Configuración</a></nav>'
         '<nav aria-label="Otras funciones">'
         "<strong>Otras funciones:</strong> "
+        '<a href="/control/actividad">Actividad global</a> · '
         '<a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> · '
-        '<a href="/telegram">Telegram</a> · <a href="/estado">Estado</a> · '
+        '<a href="/estado">Estado</a> · '
         '<a href="/avisos">Avisos</a> · <a href="/avisos-oficiales">Eventos oficiales</a> · '
         '<a href="/monitor/tokens">Monitor de tokens</a></nav>'
         if private_navigation

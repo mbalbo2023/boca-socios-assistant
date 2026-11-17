@@ -75,6 +75,7 @@ def render(
     csrf: str = "csrf-fixture",
     legacy_operation: str | None = None,
     activity: bool = False,
+    engine: str | None = None,
 ) -> tuple[Page, bytes, dict[str, str]]:
     from boca_socios.panel import engine_view
 
@@ -93,6 +94,7 @@ def render(
         if members is None
         else members,
         site_url_ready=site_url_ready,
+        engine=engine,
     )
     if activity:
         from boca_socios.panel.private_ui import worker_activity
@@ -104,6 +106,221 @@ def render(
             members=members or (),
         )
     return Page(body), body, operations
+
+
+@pytest.mark.parametrize("engine", ["queues_tokens", "browsers_members"])
+def test_filtered_page_poll_handles_absent_other_engine_dom(engine):
+    snapshot = {
+        "version": 1,
+        "observed_at": "2026-11-17T18:00:00Z",
+        "context_limit": 50,
+        "engines": [
+            {
+                "engine": name,
+                "state": "STARTING",
+                "phase": "WORKER_RECEIPT_UNVERIFIED",
+                "updated_at": "2026-11-17T17:00:00Z",
+                "requested_contexts": 3,
+                "created": 0,
+                "active": 0,
+                "closed": 0,
+                "failed": 0,
+                "sessions": [],
+            }
+            for name in ("queues_tokens", "browsers_members")
+        ],
+    }
+    actual = _run_poll_script([snapshot], mode=engine)
+    assert actual["status"] == "Estados y sesiones actualizados."
+    assert actual["requests"][0]["url"] == "/control/motores.json"
+    assert "15:00:00" in actual["results"][0]["checked"]
+    if engine == "queues_tokens":
+        assert "14:00:00" in actual["results"][0]["updated"]
+        assert actual["results"][0]["state"] == "Iniciando"
+    page, body, _ = render(snapshot=snapshot, engine=engine)
+    assert page.text[f"{engine}-phase"] == "Arranque del navegador sin confirmar"
+    assert page.text[f"{engine}-requested_contexts"] == "3"
+    assert page.text[f"{engine}-created"] == page.text[f"{engine}-active"] == "0"
+    assert "Múltiples contextos concurrentes" in body.decode()
+    assert (
+        "Reserva real y capturas terminales no están implementadas" in body.decode()
+        if engine == "browsers_members"
+        else True
+    )
+
+
+def test_queue_page_links_to_existing_private_reveal_without_leaking_bearer():
+    session_id = str(uuid4())
+    snapshot = {
+        "engines": [
+            {
+                "engine": "queues_tokens",
+                "sessions": [
+                    {
+                        "session_id": session_id,
+                        "browser": "chromium",
+                        "has_target_url": True,
+                        "display_url": "https://example.invalid/queue?queueittoken=private-fixture",
+                        "observed_at": "2026-11-17T17:00:00Z",
+                        "phase": "NO_EVENT_OBSERVED",
+                    }
+                ],
+            }
+        ]
+    }
+    page, body, _ = render(snapshot=snapshot, engine="queues_tokens")
+    assert b"private-fixture" not in body
+    assert any(
+        tag == "a" and attrs.get("href") == f"/control/sesiones/{session_id}"
+        for tag, attrs in page.elements
+    )
+    links = [
+        attrs
+        for tag, attrs in page.elements
+        if tag == "a" and attrs.get("href") == f"/control/sesiones/{session_id}"
+    ]
+    assert len(links) == 1 and links[0]["data-field"] == "inspect"
+    assert "Ver y copiar token/URL de la sesión 1" in body.decode()
+    assert "La página informa que no hay eventos disponibles" in body.decode()
+    assert b"queueittoken=" not in body
+
+
+def test_live_session_rotation_has_only_current_private_links_and_truthful_copy_labels():
+    ids = [str(uuid4()) for _ in range(3)]
+    first = _evidence_snapshot(
+        {
+            "session_id": ids[0],
+            "browser": "chromium",
+            "has_target_url": True,
+        }
+    )
+    first["engines"][0]["sessions"].append(
+        {
+            "session_id": ids[1],
+            "browser": "firefox",
+            "has_target_url": False,
+        }
+    )
+    second = _evidence_snapshot(
+        {
+            "session_id": ids[2],
+            "browser": "webkit",
+            "has_target_url": False,
+        }
+    )
+    actual = _run_poll_script([first, second], mode="queues_tokens", rotation=True)
+    assert actual["results"][0]["inspectionLinks"] == [
+        {
+            "href": f"/control/sesiones/{ids[0]}",
+            "label": "Ver y copiar token/URL de la sesión 1 de colas y tokens",
+        },
+        {"href": f"/control/sesiones/{ids[1]}", "label": "Inspeccionar sesión 2 de colas y tokens"},
+    ]
+    assert actual["results"][1]["inspectionLinks"] == [
+        {"href": f"/control/sesiones/{ids[2]}", "label": "Inspeccionar sesión 1 de colas y tokens"},
+    ]
+    for snapshot in (first, second):
+        page, body, _ = render(snapshot=snapshot, engine="queues_tokens")
+        sessions = snapshot["engines"][0]["sessions"]
+        links = [
+            attrs
+            for tag, attrs in page.elements
+            if tag == "a" and attrs.get("data-field") == "inspect"
+        ]
+        assert len(links) == len(sessions)
+        assert "queueittoken=" not in body.decode()
+    assert actual["clipboard"] == actual["selects"] == 0
+
+
+@pytest.mark.parametrize("engine", ["queues_tokens", "browsers_members"])
+def test_dedicated_engine_shows_received_distribution_not_next_start_defaults(engine):
+    first = {
+        "version": 1,
+        "observed_at": "2026-11-17T18:00:00Z",
+        "context_limit": 50,
+        "engines": [
+            {
+                "engine": engine,
+                "state": "RUNNING",
+                "requested_contexts": 10,
+                "created": 4,
+                "active": 3,
+                "closed": 0,
+                "failed": 0,
+                "sessions": [],
+                "counts": {"chromium": 7, "firefox": 2, "webkit": 1},
+            }
+        ],
+    }
+    second = copy.deepcopy(first)
+    second["engines"][0].update(
+        counts={"chromium": 1, "firefox": 8, "webkit": 2},
+        requested_contexts=11,
+        created=6,
+        active=5,
+    )
+    parsed, body, _ = render(snapshot=first, engine=engine)
+    assert parsed.text[f"{engine}-counts"] == "Chromium: 7 · Firefox: 2 · WebKit: 1"
+    assert parsed.text[f"{engine}-created"] == "4"
+    assert parsed.text[f"{engine}-active"] == "3"
+    assert "Sin desglose verificable de creados/activos por tipo de navegador" in body.decode()
+    fields = parsed.fields(f"/control/motores/{engine}/iniciar")
+    assert [fields[kind]["value"] for kind in ("chromium", "firefox", "webkit")] == [
+        "15",
+        "5",
+        "5",
+    ]
+    actual = _run_poll_script([first, second], mode=engine)
+    assert [result["distribution"][engine] for result in actual["results"]] == [
+        "Chromium: 7 · Firefox: 2 · WebKit: 1",
+        "Chromium: 1 · Firefox: 8 · WebKit: 2",
+    ]
+    assert [result["contextTotals"][engine] for result in actual["results"]] == [
+        {"created": "4", "active": "3"},
+        {"created": "6", "active": "5"},
+    ]
+    assert all(
+        result["status"] == "Estados y sesiones actualizados." for result in actual["results"]
+    )
+
+
+@pytest.mark.parametrize("engine", ["queues_tokens", "browsers_members"])
+def test_cold_engine_does_not_claim_default_counts_are_received_requests(engine):
+    snapshot = {
+        "version": 1,
+        "observed_at": "2026-11-17T18:00:00Z",
+        "context_limit": 50,
+        "engines": [
+            {
+                "engine": engine,
+                "state": "STOPPED",
+                "activation_id": None,
+                "requested_contexts": 0,
+                "created": 0,
+                "active": 0,
+                "closed": 0,
+                "failed": 0,
+                "sessions": [],
+                "counts": {"chromium": 15, "firefox": 5, "webkit": 5},
+            }
+        ],
+    }
+    parsed, _, _ = render(snapshot=snapshot, engine=engine)
+    assert parsed.text[f"{engine}-counts"] == "Sin solicitudes verificadas"
+    actual = _run_poll_script([snapshot], mode=engine)
+    assert actual["results"][0]["distribution"][engine] == "Sin solicitudes verificadas"
+
+
+@pytest.mark.parametrize(
+    "engine,title",
+    [
+        ("queues_tokens", "Motor A · Colas y tokens"),
+        ("browsers_members", "Motor B · Navegadores y socios"),
+    ],
+)
+def test_engine_destination_identifies_itself_with_its_own_heading(engine, title):
+    _, body, _ = render(engine=engine)
+    assert f"<h1>{title}</h1>".encode() in body
 
 
 def test_start_forms_scope_member_and_counts_to_the_chosen_engine() -> None:
@@ -445,7 +662,7 @@ def test_received_queue_size_and_service_estimate_are_present_without_computatio
     )
 
 
-def _run_poll_script(snapshots, *, present=True, session_id=None, mode="combined"):
+def _run_poll_script(snapshots, *, present=True, session_id=None, mode="combined", rotation=False):
     from boca_socios.panel import engine_view
 
     node = shutil.which("node")
@@ -453,7 +670,11 @@ def _run_poll_script(snapshots, *, present=True, session_id=None, mode="combined
     identifiers = None
     script = engine_view._SCRIPT
     if mode != "combined":
-        parsed, rendered, _ = render(snapshot=snapshots[0], activity=mode == "activity")
+        parsed, rendered, _ = render(
+            snapshot=snapshots[0],
+            activity=mode == "activity",
+            engine=mode if mode in {"queues_tokens", "browsers_members"} else None,
+        )
         identifiers = [attrs["id"] for _, attrs in parsed.elements if "id" in attrs]
         script = "\n".join(re.findall(r"<script>(.*?)</script>", rendered.decode(), re.S))
     harness = r"""
@@ -467,6 +688,7 @@ function element(id) {
     textContent: '', hidden: true, disabled: true, children: [],
     dataset: {ready: 'true'}, fields: new Map(),
     replaceChildren(...children) { this.children = children; },
+    append(...children) { this.children.push(...children); },
     setAttribute(name, value) { this[name] = value; },
     addEventListener(name, callback) { this[name] = callback; },
     get elements() { return {namedItem: name => {
@@ -506,6 +728,21 @@ const context = {
     return element(id);
   }, addEventListener() {},
     createElement(tag) {
+      if (input.rotation) return {
+        dataset: {}, children: [], textContent: '',
+        append(...children) { this.children.push(...children); },
+        querySelector(selector) {
+          const field = selector.match(/data-field="([^"]+)"/)[1];
+          const find = node => node.dataset.field === field ? node :
+            node.children.map(find).find(Boolean);
+          return find(this);
+        },
+        remove() {
+          for (const node of elements.values()) {
+            node.children = node.children.filter(child => child !== this);
+          }
+        }
+      };
       if (input.mode === 'activity' && tag === 'li') return {textContent: ''};
       throw new Error('existing row replaced');
     }},
@@ -536,6 +773,14 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
       currentMember: element('browsers_members-current-member').textContent,
       startDisabled: element('queues_tokens-start-button').disabled,
       startReason: element('queues_tokens-start-reason').textContent};
+    result.distribution = Object.fromEntries(['queues_tokens', 'browsers_members']
+      .map(engine => [engine, element(engine + '-counts').textContent]));
+    result.contextTotals = Object.fromEntries(['queues_tokens', 'browsers_members']
+      .map(engine => [engine, {created: element(engine + '-created').textContent,
+        active: element(engine + '-active').textContent}]));
+    if (input.rotation) result.inspectionLinks = element('queues_tokens-sessions').children
+      .map(item => {const link = item.querySelector('[data-field="inspect"]');
+        return {href: link.href, label: link.textContent};});
     if (row) for (const field of ['outcome', 'queue_state', 'phase', 'event_state', 'event_id',
       'reason', 'configured_url', 'navigation_attempt', 'display_url', 'inspect',
       'queue_opening_at', 'countdown', 'expected_service_time']) {
@@ -564,6 +809,7 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
                 "session_id": session_id,
                 "snapshots": snapshots,
                 "mode": mode,
+                "rotation": rotation,
             }
         ),
         capture_output=True,
@@ -822,9 +1068,13 @@ def test_actual_poll_relabels_received_tokens_without_replacing_controls():
     session_id = str(uuid4())
     cases = (
         (False, False, "Inspeccionar sesión 1 de colas y tokens"),
-        (True, False, "Ver token de cola de la sesión 1 de colas y tokens"),
-        (False, True, "Ver tokens de autenticación de la sesión 1 de colas y tokens"),
-        (True, True, "Ver tokens de cola y autenticación de la sesión 1 de colas y tokens"),
+        (True, False, "Ver y copiar token/URL de la sesión 1 de colas y tokens"),
+        (False, True, "Ver y copiar tokens de autenticación de la sesión 1 de colas y tokens"),
+        (
+            True,
+            True,
+            "Ver y copiar tokens de cola y autenticación/URL de la sesión 1 de colas y tokens",
+        ),
     )
     snapshots = [
         _evidence_snapshot({"session_id": session_id, "has_target_url": queue, "has_auth": auth})
@@ -917,7 +1167,7 @@ def test_navigation_purpose_and_result_labels_are_shared_without_claiming_succes
     snapshot = _evidence_snapshot({"session_id": session_id, "has_auth": True})
     snapshot["engines"][0]["engine"] = "browsers_members"
     _, body, _ = render(snapshot=snapshot, activity=True)
-    assert b"Ver tokens de autenticaci" in body
+    assert b"Ver y copiar tokens de autenticaci" in body
     assert b"de la sesi" in body and b"1 de navegadores de socios</a>" in body
 
 

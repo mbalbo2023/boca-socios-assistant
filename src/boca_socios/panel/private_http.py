@@ -485,6 +485,12 @@ class PrivatePanelApplication:
                 if self._bot_control is not None:
                     return self._bot_page(start, session, home=False)
                 return self._control_page(start, session)
+            if path in ("/control/colas", "/control/socios"):
+                return self._engine_page(
+                    start,
+                    session,
+                    engine="queues_tokens" if path == "/control/colas" else "browsers_members",
+                )
             if path == "/control/motores.json" and self._engine_control is not None:
                 return _response(
                     start,
@@ -659,7 +665,7 @@ class PrivatePanelApplication:
 
     def _token_monitor_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
         if self._engine_control is not None and "simulation:write" in session.permissions:
-            return self._redirect(start, "/control/actividad")
+            return self._redirect(start, "/control/colas")
         queue = (
             self._queue_monitor.list_summaries(at=self._now())
             if self._queue_monitor is not None
@@ -909,23 +915,28 @@ class PrivatePanelApplication:
             return _response(start, 200, private_ui.guest_configuration(configured))
         return _error(start, 404, "Ruta no disponible.")
 
-    def _engine_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
+    def _engine_page(
+        self, start: StartResponse, session: OwnerSession, *, engine: str | None = None
+    ) -> list[bytes]:
         from boca_socios.panel import engine_view
 
         if self._engine_control is None:
             return _error(start, 404, "Motores no disponibles.")
         operations: dict[str, str] = {}
-        for engine in ("queues_tokens", "browsers_members"):
+        for name in (engine,) if engine else ("queues_tokens", "browsers_members"):
             for action in ("start", "stop"):
-                scope = f"owner-engine-v1:{engine}:{action}"
+                scope = f"owner-engine-v1:{name}:{action}"
                 operation = self._sessions.new_operation(session, form_scope=scope.encode())
                 if operation is None:
                     return _error(start, 429, "Espere antes de abrir más controles.")
-                operations[f"{engine}:{action}"] = operation
-        recovery = self._sessions.new_operation(session, form_scope=b"owner-lifecycle-v1:bot:stop")
-        if recovery is None:
-            return _error(start, 429, "Espere antes de abrir más controles.")
-        operations["legacy:stop"] = recovery
+                operations[f"{name}:{action}"] = operation
+        if engine is None:
+            recovery = self._sessions.new_operation(
+                session, form_scope=b"owner-lifecycle-v1:bot:stop"
+            )
+            if recovery is None:
+                return _error(start, 429, "Espere antes de abrir más controles.")
+            operations["legacy:stop"] = recovery
         return _response(
             start,
             200,
@@ -935,6 +946,7 @@ class PrivatePanelApplication:
                 operations,
                 self._directory.list_members(),
                 site_url_ready=self._site_url_ready(),
+                engine=engine,
             ),
             csp=engine_view.csp(),
         )
@@ -977,6 +989,7 @@ class PrivatePanelApplication:
         ):
             return _error(start, 400, "La activación del motor no es válida.")
         target = "start" if is_start else "stop"
+        destination = "/control/colas" if engine == "queues_tokens" else "/control/socios"
         scope = f"owner-engine-v1:{engine}:{target}".encode()
         replay, operation = self._sessions.reserve(
             session,
@@ -988,7 +1001,7 @@ class PrivatePanelApplication:
         )
         if replay:
             if replay == 303:
-                return self._redirect(start, "/control")
+                return self._redirect(start, destination)
             return _error(start, replay, "Orden ya procesada o no autorizada.")
         assert operation is not None
         if is_start and not self._site_url_ready():
@@ -1021,7 +1034,7 @@ class PrivatePanelApplication:
                 "No se pudo confirmar el aviso al ejecutor. El estado durable se conserva; consulte Control.",
             )
         self._sessions.finish(operation, 303)
-        return self._redirect(start, "/control")
+        return self._redirect(start, destination)
 
     def _engine_start_pending(self, engine: str) -> bool:
         if self._engine_control is None:
