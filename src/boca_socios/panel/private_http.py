@@ -354,16 +354,17 @@ class PrivatePanelApplication:
         if environ.get("QUERY_STRING", "") or environ.get("HTTP_TRANSFER_ENCODING", ""):
             return _error(start, 400, "Solicitud inválida.")
         path, method = environ.get("PATH_INFO"), environ.get("REQUEST_METHOD")
-        if path == "/ingresar" and method == "GET":
-            if not self._empty_get(environ):
-                return _error(start, 400, "Solicitud inválida.")
+        if path == "/sesion" and method == "POST":
+            return self._login(environ, start)
+        login_page = path == "/ingresar" and method == "GET"
+        if login_page and not self._empty_get(environ):
+            return _error(start, 400, "Solicitud inválida.")
+        session = self._sessions.lookup(environ.get("HTTP_COOKIE", ""))
+        if login_page and (session is None or "simulation:write" not in session.permissions):
             challenge = self._passkey.challenge()
             if challenge is None:
                 return _error(start, 429, "Espere antes de solicitar otro ingreso.")
             return _response(start, 200, private_ui.login(challenge, self._passkey.credential_id))
-        if path == "/sesion" and method == "POST":
-            return self._login(environ, start)
-        session = self._sessions.lookup(environ.get("HTTP_COOKIE", ""))
         if session is None:
             if method == "GET" and path in (
                 "/",
@@ -387,6 +388,8 @@ class PrivatePanelApplication:
             return original_start(status, headers)
 
         start = start_with_renewal
+        if login_page:
+            return self._redirect(start, "/control")
         if path == "/socios/nuevo" or (path == "/socios" and method == "POST"):
             return self._enroll(environ, start)
         if path == "/socios" or (isinstance(path, str) and path.startswith("/socios/")):

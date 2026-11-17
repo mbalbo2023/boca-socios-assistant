@@ -35,8 +35,10 @@ class Engines:
         return None
 
 
-def panel(tmp_path, monkeypatch, *, permissions=PERMISSIONS):
-    provider, key, credential = _passkey([0.0], permissions=permissions)
+def panel(tmp_path, monkeypatch, *, permissions=PERMISSIONS, clock=None):
+    provider, key, credential = _passkey(
+        clock if clock is not None else [0.0], permissions=permissions
+    )
     legacy, db = _app(tmp_path / "boca.sqlite3", provider, FakeHost())
     engines = Engines()
     app = PrivatePanelApplication(
@@ -206,7 +208,7 @@ def test_owner_token_monitor_redirects_to_queues_without_allocating_operations(
 
 
 @pytest.mark.parametrize("path", ["/", "/control"])
-def test_control_aliases_keep_controls_and_five_primary_navigation_links(
+def test_control_aliases_keep_controls_and_three_primary_navigation_links(
     tmp_path, monkeypatch, path
 ):
     app, engines, cookie = panel(tmp_path, monkeypatch)
@@ -220,25 +222,14 @@ def test_control_aliases_keep_controls_and_five_primary_navigation_links(
     assert primary is not None
     assert re.findall(rb'href="([^"]+)"[^>]*>([^<]+)</a>', primary[1]) == [
         (b"/control", b"Control"),
-        (b"/control/colas", "Motor A · Colas y tokens".encode()),
-        (b"/control/socios", "Motor B · Socios".encode()),
-        (b"/telegram", b"Telegram"),
+        (b"/control/actividad", b"Actividad"),
         (b"/configuracion", "Configuración".encode()),
     ]
-    secondary = re.search(rb'<nav aria-label="Otras funciones">(.*?)</nav>', page, re.S)
-    assert secondary is not None
-    assert b"Otras funciones" in secondary.group(1)
-    assert "Más secciones".encode() not in page
-    for target in (
-        b"/control/actividad",
-        b"/socios",
-        b"/comandos",
-        b"/estado",
-        b"/avisos",
-        b"/avisos-oficiales",
-        b"/monitor/tokens",
-    ):
-        assert secondary[1].count(b'href="' + target + b'"') == 1
+    assert primary[1].count(b'aria-current="page"') == 1
+    assert b'href="/control" aria-current="page"' in primary[1]
+    assert page.count(b"<nav ") == 1
+    assert b'<body class="dashboard">' in page
+    assert re.search(rb"\[hidden\]\s*\{\s*display:\s*none\s*!important;", page)
     assert engines.calls == []
 
 
@@ -276,6 +267,46 @@ def test_login_keeps_passkey_without_private_navigation(tmp_path):
     assert b"<nav" not in page
     assert b'href="/control"' not in page and b'href="/configuracion"' not in page
     assert "'sha256-" in headers["Content-Security-Policy"]
+
+
+def test_login_redirect_requires_current_operating_session(tmp_path, monkeypatch):
+    clock = [0.0]
+    app, engines, owner = panel(tmp_path, monkeypatch, clock=clock)
+    code, headers, body = _request(app, "/ingresar", cookie=owner)
+    assert (code, headers.get("Location"), body) == (303, "/control", b"")
+    assert "Max-Age=34560000" in headers["Set-Cookie"]
+    app._sessions.revoke(owner)
+    for cookie in (owner, "", "__Host-boca_session=invalid"):
+        clock[0] += 2
+        code, headers, body = _request(app, "/ingresar", cookie=cookie)
+        assert code == 200 and b'id="passkey"' in body and "Location" not in headers
+    assert engines.calls == []
+
+
+def test_login_keeps_passkey_for_limited_owner(tmp_path, monkeypatch):
+    clock = [0.0]
+    app, _, reader = panel(
+        tmp_path,
+        monkeypatch,
+        permissions=frozenset({"members:enroll", "local-status:read"}),
+        clock=clock,
+    )
+    clock[0] += 2
+    code, headers, body = _request(app, "/ingresar", cookie=reader)
+    assert code == 200 and b'id="passkey"' in body and "Location" not in headers
+
+
+def test_configuration_groups_telegram_member_and_advanced_destinations():
+    from boca_socios.panel.private_ui import site_url_configuration
+
+    page = site_url_configuration("csrf", "op", None).decode()
+    before, disclosure, after = page.partition("<details>")
+    assert disclosure and "Más herramientas" in after
+    for path in ("/telegram/configurar", "/telegram", "/socios", "/socios/nuevo"):
+        assert f'href="{path}"' in before
+    for path in ("/comandos", "/estado", "/avisos", "/avisos-oficiales", "/monitor/tokens"):
+        assert f'href="{path}"' in after
+    assert 'name="bot_token"' not in page and 'name="chat_id"' not in page
 
 
 def test_live_activity_html_keeps_timeline_with_real_engine_coordinator(tmp_path):
@@ -531,6 +562,7 @@ def test_private_session_detail_separates_configuration_attempt_and_final_sample
     monkeypatch.setattr(engines, "private_details", lambda *a, **k: details)
     code, _, page = _request(app, "/control/sesiones/" + identity.session_id, cookie=cookie)
     assert code == 200
+    assert b'href="/control/actividad" aria-current="page"' in page
     for label in (
         "ID de evento observado en la página",
         "URL configurada",

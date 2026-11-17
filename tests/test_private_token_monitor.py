@@ -156,7 +156,14 @@ def test_unauthenticated_and_readonly_sessions_never_reveal_private_tokens(tmp_p
     assert b"private/pass" not in page and b"private-boca-token" not in page
     assert b"private-boca-refresh" not in page
     assert b"private%2Fpass%3D" not in page
-    assert b'href="/monitor/tokens"' in _request(app, "/", cookie=cookie)[2]
+    config_status, _, configuration = _request(app, "/configuracion", cookie=cookie)
+    assert config_status == 200
+    tools = re.search(
+        r"<details><summary>Más herramientas</summary>(.*?)</details>",
+        configuration.decode(),
+        re.S,
+    )
+    assert tools is not None and 'href="/monitor/tokens"' in tools[1]
     assert host.calls == []
 
     read_permissions = PERMISSIONS - {"simulation:write"}

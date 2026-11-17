@@ -60,6 +60,8 @@ CHECKS = (
 FORM_PROOF = "fixed-public-offline-proof"
 _STAMP = "2020-01-01T12:00:00+00:00"
 _MAX_FIXTURE = 170_000
+_CONTROL_SLOT = "<!--offline-control-script-->"
+_MAX_DOCUMENT = 100_000
 _MAX_CAPTURE = 6_000_000
 _MAX_PNG = 2_000_000
 _MAX_HEIGHT = 12_000
@@ -153,6 +155,10 @@ _PROBE_STEPS = frozenset(
         "live_rows_poll",
         "session_preserved",
         "live_projection",
+        "live_projection_inputs",
+        "live_projection_member",
+        "live_projection_totals",
+        "live_projection_queue",
         "stop_fences",
         "private_metadata",
         "queues_stop",
@@ -419,6 +425,15 @@ def make_fixture(source_sha: str) -> dict[str, Any]:
         MemberView(_MEMBERS[1], "Socio ficticio Dos", "d•••@example.invalid", True),
     )
     body = engine_view.page(snapshots[0], FORM_PROOF, _OPERATIONS, members, site_url_ready=True)
+    script = engine_view._CONTROL_SCRIPT
+
+    def pack(rendered: bytes) -> str:
+        html = rendered.decode()
+        block = f"<script>{script}</script>"
+        if html.count(block) != 1 or _CONTROL_SLOT in html:
+            raise ValueError("offline_fixture_unverified")
+        return html.replace(block, _CONTROL_SLOT, 1)
+
     redirect_documents = []
     for phase in (1, 2, 4, 5):
         redirected = engine_view.page(
@@ -427,7 +442,7 @@ def make_fixture(source_sha: str) -> dict[str, Any]:
         redirect_documents.append(
             {
                 "snapshot_phase": phase,
-                "html": redirected.decode(),
+                "html": pack(redirected),
                 "html_sha256": hashlib.sha256(redirected).hexdigest(),
             }
         )
@@ -437,9 +452,11 @@ def make_fixture(source_sha: str) -> dict[str, Any]:
         members=members,
     )
     fixture = {
-        "schema": 3,
+        "schema": 4,
         "source_sha": source_sha,
-        "html": body.decode(),
+        "html": pack(body),
+        "control_script": script,
+        "control_script_sha256": hashlib.sha256(script.encode()).hexdigest(),
         "csp": engine_view.csp(),
         "html_sha256": hashlib.sha256(body).hexdigest(),
         "snapshots": snapshots,
@@ -452,6 +469,22 @@ def make_fixture(source_sha: str) -> dict[str, Any]:
     }
     validate_fixture(fixture, source_sha)
     return fixture
+
+
+def _control_html(document: dict[str, Any], script: str) -> bytes:
+    template = document["html"]
+    if (
+        not isinstance(template, str)
+        or template.count(_CONTROL_SLOT) != 1
+        or "<script" in template.lower()
+        or len(template.encode())
+        - len(_CONTROL_SLOT)
+        + len(script.encode())
+        + len("<script></script>")
+        > _MAX_DOCUMENT
+    ):
+        raise ValueError("offline_fixture_unverified")
+    return template.replace(_CONTROL_SLOT, f"<script>{script}</script>", 1).encode()
 
 
 def validate_fixture(value: object, source_sha: str) -> dict[str, Any]:
@@ -468,13 +501,18 @@ def validate_fixture(value: object, source_sha: str) -> dict[str, Any]:
             "snapshots",
             "redirect_documents",
             "activity_document",
+            "control_script",
+            "control_script_sha256",
         }
         or type(value["schema"]) is not int
-        or value["schema"] != 3
+        or value["schema"] != 4
         or value["source_sha"] != source_sha
-        or not isinstance(value["html"], str)
-        or not 1 <= len(value["html"].encode()) <= 100_000
-        or value["html_sha256"] != hashlib.sha256(value["html"].encode()).hexdigest()
+        or not isinstance(value["control_script"], str)
+        or not 1 <= len(value["control_script"].encode()) <= _MAX_DOCUMENT
+        or any(
+            mark in value["control_script"].lower()
+            for mark in ("<script", "</script", _CONTROL_SLOT)
+        )
         or not isinstance(value["csp"], str)
         or not 1 <= len(value["csp"]) <= 8000
         or any(
@@ -493,6 +531,18 @@ def validate_fixture(value: object, source_sha: str) -> dict[str, Any]:
         or len(value["redirect_documents"]) != 4
     ):
         raise ValueError("offline_fixture_unverified")
+    script = value["control_script"]
+    digest = hashlib.sha256(script.encode())
+    script_hash = "'sha256-" + base64.b64encode(digest.digest()).decode("ascii") + "'"
+    if (
+        value["control_script_sha256"] != digest.hexdigest()
+        or not any(
+            part.strip().startswith("script-src ") and script_hash in part.split()
+            for part in value["csp"].split(";")
+        )
+        or value["html_sha256"] != hashlib.sha256(_control_html(value, script)).hexdigest()
+    ):
+        raise ValueError("offline_fixture_unverified")
     for document, phase in zip(
         [*value["redirect_documents"], value["activity_document"]], (1, 2, 4, 5, 2), strict=True
     ):
@@ -502,11 +552,20 @@ def validate_fixture(value: object, source_sha: str) -> dict[str, Any]:
             or type(document["snapshot_phase"]) is not int
             or document["snapshot_phase"] != phase
             or not isinstance(document["html"], str)
-            or not 1 <= len(document["html"].encode()) <= 100_000
-            or document["html_sha256"] != hashlib.sha256(document["html"].encode()).hexdigest()
         ):
             raise ValueError("offline_fixture_unverified")
-    if len(_json(value)) > _MAX_FIXTURE:
+        if document is value["activity_document"]:
+            if (
+                _CONTROL_SLOT in document["html"]
+                or not 1 <= len(document["html"].encode()) <= _MAX_DOCUMENT
+            ):
+                raise ValueError("offline_fixture_unverified")
+            html = document["html"].encode()
+        else:
+            html = _control_html(document, script)
+        if document["html_sha256"] != hashlib.sha256(html).hexdigest():
+            raise ValueError("offline_fixture_unverified")
+    if len(_json(value)) + 1 > _MAX_FIXTURE:  # --make-fixture emits one final newline.
         raise ValueError("offline_fixture_unverified")
     return value
 
@@ -667,7 +726,7 @@ class _FixtureService:
                         "Content-Security-Policy": self.fixture["csp"],
                         "Referrer-Policy": "same-origin",
                     },
-                    document["html"].encode(),
+                    _control_html(document, self.fixture["control_script"]),
                 )
             if method == "GET" and path == "/control/actividad":
                 if self.phase != 2 or self.documents != 3 or self.activity_documents != 0:
@@ -1139,19 +1198,38 @@ async def _viewport(
         ):
             raise RuntimeError("existing_session_replaced")
         step = "live_projection"
+        technical = activity.locator("details").filter(
+            has=activity.get_by_text("Datos técnicos de los motores", exact=True)
+        )
+        summary = technical.locator("summary")
+        if await technical.get_attribute("open") is not None:
+            raise RuntimeError("live_snapshot_projection_unverified")
+        await summary.click()
+        if await technical.get_attribute("open") is None:
+            raise RuntimeError("live_snapshot_projection_unverified")
+        step = "live_projection_inputs"
         if (
             await page.locator("#queues_tokens-chromium").input_value() != "19"
             or await page.locator("#browsers_members-chromium").input_value() != "11"
-            or await page.locator("#browsers_members-member").input_value() != _MEMBERS[0]
+        ):
+            raise RuntimeError("live_snapshot_projection_unverified")
+        step = "live_projection_member"
+        if (
+            await page.locator("#browsers_members-member").input_value() != _MEMBERS[0]
             or await page.locator("#browsers_members-current-member").get_attribute(
                 "data-member-id"
             )
             != _MEMBERS[1]
-            or await activity.locator("#engines-total-requested_contexts").inner_text() != "50"
-            or await activity.locator("#engines-total-created").inner_text() != "3"
-            or await activity.locator("#engines-total-active").inner_text() != "3"
-            or await activity.locator("#queues_tokens-queues").inner_text() != "1"
         ):
+            raise RuntimeError("live_snapshot_projection_unverified")
+        step = "live_projection_totals"
+        for name, expected in (("requested_contexts", "50"), ("created", "3"), ("active", "3")):
+            total = technical.locator(f"#engines-total-{name}")
+            if not await total.is_visible() or await total.inner_text() != expected:
+                raise RuntimeError("live_snapshot_projection_unverified")
+        step = "live_projection_queue"
+        queue_count = activity.locator("#queues_tokens-queues")
+        if not await queue_count.is_visible() or await queue_count.inner_text() != "1":
             raise RuntimeError("live_snapshot_projection_unverified")
         step = "stop_fences"
         for engine in ENGINES:
@@ -1191,13 +1269,20 @@ async def _viewport(
         ):
             raise RuntimeError("independent_stop_projection_unverified")
         step = "layout"
-        # The seven historic destinations now remain visible in a navigation
-        # region; only engine-specific optional inputs use native details.
-        # Exercise the real navigation on both owner pages before measuring.
+        await summary.click()
+        if await technical.get_attribute("open") is not None:
+            raise RuntimeError("accessible_layout_unverified")
         for view in (page, activity):
-            historical = view.locator('nav[aria-label="Otras funciones"] a')
-            if await historical.count() != 7 or not all(
-                [await historical.nth(index).is_visible() for index in range(7)]
+            primary = view.locator('nav[aria-label="Principal"] a')
+            if (
+                await view.locator("nav").count() != 1
+                or await primary.evaluate_all(
+                    "nodes => nodes.map(node => node.getAttribute('href'))"
+                )
+                != ["/control", "/control/actividad", "/configuracion"]
+                or await view.locator('nav a[aria-current="page"]').get_attribute("href")
+                != ("/control" if view is page else "/control/actividad")
+                or not all([await primary.nth(index).is_visible() for index in range(3)])
             ):
                 raise RuntimeError("accessible_layout_unverified")
             if view is page:

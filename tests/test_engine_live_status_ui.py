@@ -182,8 +182,8 @@ vm.runInNewContext(fixture.script, {
 """
 
 
-def _poll(engine, cycles):
-    page, body, _ = render(snapshot=_snapshot(engine), engine=engine)
+def _poll(engine, cycles, *, combined=False):
+    page, body, _ = render(snapshot=_snapshot(engine), engine=None if combined else engine)
     node = shutil.which("node")
     assert node
     result = subprocess.run(  # noqa: S603 - fixed offline runtime and the actual static UI script
@@ -212,6 +212,41 @@ def _activity(*events):
         "chromium_telemetry": "available",
         "events": events,
     }
+
+
+@pytest.mark.parametrize("engine", [QUEUES, MEMBERS])
+def test_control_refreshes_both_motor_summaries_once_without_worker_timeline(engine):
+    snapshot = _snapshot()
+    snapshot["engines"] += _snapshot(MEMBERS, state="RUNNING", created=2, active=1)["engines"]
+    parsed, _, _ = render(snapshot=snapshot)
+    assert parsed.text.get(QUEUES + "-live-error", "").startswith(
+        "No se confirmó la apertura del navegador"
+    )
+    assert parsed.text.get(MEMBERS + "-live-contexts") == "25 solicitados · 2 creados · 1 activos"
+    assert not any("record-0" in str(attrs.get("id")) for _, attrs in parsed.elements)
+    links = [attrs.get("href") for tag, attrs in parsed.elements if tag == "a"]
+    assert links.count("/control/actividad#" + engine + "-heading") == 1
+    changed = _snapshot(state="RUNNING", requested_contexts=7, created=5, active=3)
+    changed["engines"] += _snapshot(MEMBERS, requested_contexts=4, created=0, active=0)["engines"]
+    result = _poll(
+        engine, [{"engine": changed}, {"engine": 503}, {"engine": changed}], combined=True
+    )
+    fresh, stale, recovered = result["results"]
+    expected = (
+        "7 solicitados · 5 creados · 3 activos"
+        if engine == QUEUES
+        else "4 solicitados · 0 creados · 0 activos"
+    )
+    assert (
+        fresh["contexts"]["text"]
+        == stale["contexts"]["text"]
+        == recovered["contexts"]["text"]
+        == expected
+    )
+    assert "histórico" in stale["motor-status"]["text"]
+    assert "histórico" not in recovered["motor-status"]["text"]
+    assert [item["url"] for item in result["requests"]] == ["/control/motores.json"] * 3
+    assert result["intervals"] == [5000]
 
 
 def _event(minute, message=HOST_MESSAGE):

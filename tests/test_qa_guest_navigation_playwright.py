@@ -84,7 +84,7 @@ def test_ephemeral_wsgi_fixture_grants_owner_only_with_random_context_header() -
             response = connection.getresponse()
             owner = response.read()
             assert response.status == 200
-            assert b'<nav aria-label="Otras funciones">' in owner
+            assert owner.count(b"<nav ") == 1 and b'aria-current="page"' in owner
             assert b'<form id="queues_tokens-start" method="post"' in owner
 
             connection.request("POST", "/control")
@@ -221,6 +221,7 @@ def test_phase_receipt_redacts_exception_and_exposes_only_category(stage, monkey
     assert output.err == ""
     assert f"state=NO_GO phase={stage} " in output.out
     assert "owner_auth=WSGI_SYNTHETIC_ONLY" in output.out
+    assert "owner_primary=3 owner_other=0" in output.out
     assert "page_egress=ROUTE_DENIED" in output.out
     assert "egress=0" not in output.out
     assert secret not in output.out

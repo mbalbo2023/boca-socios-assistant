@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -112,7 +114,10 @@ def test_activity_combines_both_engines_without_minting_operations(tmp_path, mon
     for engine in (b"queues_tokens", b"browsers_members"):
         assert b'id="' + engine + b'-state"' in body
         assert b'id="' + engine + b'-sessions"' in body
-    assert b'id="worker-events"' in body
+    assert body.count(b'id="worker-events"') == 1
+    assert body.index(b'id="worker-events"') < body.index(b'id="queues_tokens-state"')
+    for name in (b"queues_tokens", b"browsers_members"):
+        assert b'href="#' + name + b'-heading"' in body
     assert b"/control/motores.json" in body and b"/control/actividad.json" in body
     assert b"<form" not in body and b'name="operation_id"' not in body
     for kind in ("script", "style"):
@@ -129,13 +134,81 @@ def test_activity_separates_check_time_from_last_actual_worker_event():
     from test_engine_view import Page
 
     event = WorkerActivityEvent("2026-11-16T10:00:00Z", "host", "warning", "Acuse no verificado")
+    advisory = WorkerActivityEvent(
+        "2026-11-16T12:00:00Z",
+        "chromium",
+        "warning",
+        "Chromium: sólo hay telemetría antigua; no confirma un proceso activo.",
+    )
     snapshot = WorkerActivitySnapshot(
-        "2026-11-16T12:00:00Z", "fixed_stages_only", "degraded", (event,)
+        "2026-11-16T12:00:00Z", "fixed_stages_only", "degraded", (event, advisory)
     )
     page = Page(worker_activity(snapshot))
     assert "07:00:00 ART" in page.text["worker-activity-observed"]
     assert "09:00:00 ART" in page.text["worker-activity-refreshed"]
+    assert "Acuse no verificado" in page.text["worker-activity-status"]
+    assert "telemetría antigua" not in page.text["worker-events"]
+    assert "telemetría antigua" in page.text["chromium-telemetry-status"]
     assert "no verificable" in page.text["chromium-telemetry-status"]
+
+
+def test_activity_poll_preserves_real_event_through_consecutive_failures_and_recovery():
+    from boca_socios.panel.private_ui import _ACTIVITY_SCRIPT
+
+    js = r"""
+const {script, events} = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const ids = new Map(); const nodes = id => {
+  if (!ids.has(id)) ids.set(id, {writes: 0, value: '', set textContent(s) { this.writes++; this.value=s; },
+    get textContent() { return this.value; }, replaceChildren(...children) {this.children=children;},
+    addEventListener(k, f) {this[k]=f;}});
+  return ids.get(id);
+};
+let cycle=0;
+require('node:vm').runInNewContext(script, {
+  document: {getElementById:nodes, createElement:() => ({})}, setInterval() {},
+  fetch: async () => ({ok:cycle===0 || cycle===3,json:async()=>({events,
+    observed_at:'2026-11-16T12:00:00Z',chromium_telemetry:'degraded'})}),
+});
+(async () => {
+  await new Promise(setImmediate);
+  const out=[];
+  for (cycle=0;cycle<4;cycle++) {
+    if (cycle) await nodes('worker-activity-refresh').click();
+    const status=nodes('worker-activity-status');
+    out.push([status.textContent,status.writes,nodes('worker-activity-observed').textContent,
+      nodes('worker-events').children.map(item=>item.textContent)]);
+  }
+  process.stdout.write(JSON.stringify(out));
+})().catch(()=>{process.exitCode=1;});
+"""
+    node = shutil.which("node")
+    assert node
+    events = [
+        dict(
+            at="2026-11-16T10:00:00Z", source="host", level="warning", message="Acuse no verificado"
+        ),
+        dict(
+            at="2026-11-16T12:00:00Z",
+            source="chromium",
+            level="warning",
+            message="Chromium: sólo hay telemetría antigua; no confirma un proceso activo.",
+        ),
+    ]
+    result = subprocess.run(  # noqa: S603 - fixed local UI, no network
+        [node, "-e", js],
+        input=json.dumps(dict(script=_ACTIVITY_SCRIPT, events=events)),
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=10,
+    )
+    first, failed, repeated, recovered = json.loads(result.stdout)
+    assert first[0] == recovered[0] == "Último evento: Acuse no verificado"
+    assert "históricos" in failed[0] and failed[1] == repeated[1]
+    assert all(
+        "07:00:00 ART" in state[2] and len(state[3]) == 1 and "Ejecutor" in state[3][0]
+        for state in (first, failed, repeated, recovered)
+    )
 
 
 def test_activity_denies_owner_session_without_simulation_permission(tmp_path: Path) -> None:

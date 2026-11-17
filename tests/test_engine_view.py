@@ -770,6 +770,7 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
       disabled: element('legacy-worker-recovery-button').disabled} : null,
       status: element('engines-live').textContent,
       state: element('queues_tokens-state').textContent,
+      phase: element('queues_tokens-phase').textContent,
       checked: element('engines-checked').textContent,
       updated: element('queues_tokens-updated').textContent,
       currentMember: element('browsers_members-current-member').textContent,
@@ -1181,6 +1182,16 @@ def test_counts_collapse_inside_start_but_required_member_stays_visible():
             assert "form" in page.ancestors[f"{engine}-{browser}"]
     assert "details" not in page.ancestors["browsers_members-member"]
     assert "form" in page.ancestors["browsers_members-member"]
+
+
+@pytest.mark.parametrize("mode", ["control", "activity"])
+def test_aggregate_phase_cannot_claim_no_event_without_session_evidence(mode):
+    snapshot = _evidence_snapshot({})
+    snapshot["engines"][0].update(phase="NO_EVENT_OBSERVED", sessions=[])
+    page, _, _ = render(snapshot=snapshot, activity=mode == "activity")
+    expected = "Comprobación de evento registrada; consulte las sesiones"
+    assert page.text["queues_tokens-phase"] == expected
+    assert _run_poll_script([snapshot], mode=mode)["results"][0]["phase"] == expected
 
 
 @pytest.mark.parametrize("mode", ["control", "activity"])
