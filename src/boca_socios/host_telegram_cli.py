@@ -224,7 +224,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 else:
                     execute = {
-                        "telegram-install-direct": partial(_execute, "install-direct", reader=None),
+                        "telegram-install-direct": partial(
+                            _execute, "install-direct", reader=None
+                        ).__call__,
                         "telegram-schema-observe": partial(
                             _execute, "observe", reader=None
                         ).__call__,
