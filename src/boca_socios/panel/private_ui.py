@@ -66,10 +66,13 @@ button.addEventListener('click', async () => {
 });
 """
 
+_EMPTY_WORKER = "Todavía no hay registros del worker. Esto no permite concluir si hay eventos o cola en el sitio."
 _ACTIVITY_SCRIPT = (
     private_token_view.ART_TIME_SCRIPT
     + "\nconst staleAdvisory = "
     + json.dumps(engine_view._LIVE_WORKER_ADVISORY, ensure_ascii=False)
+    + ";\nconst emptyWorker = "
+    + json.dumps(_EMPTY_WORKER, ensure_ascii=False)
     + ";\n"
     + """
 const list = document.getElementById('worker-events');
@@ -108,16 +111,11 @@ async function updateActivity() {
           ' · ' + event.message;
         return item;
       });
-      if (children.length === 0) {
-        const item = document.createElement('li');
-        item.textContent = 'Todavía no hay eventos registrados.';
-        children.push(item);
-      }
       list.replaceChildren(...children);
       const latest = events.at(-1);
-      observed.textContent = latest ? 'Último evento recibido: ' + formatPrivateTime(latest.at) :
-        'Sin evento recibido; estado UNKNOWN.';
-      announceActivity(latest ? 'Último evento: ' + latest.message : 'Sin eventos registrados.');
+      observed.hidden = !latest;
+      observed.textContent = latest ? 'Último evento recibido: ' + formatPrivateTime(latest.at) : '';
+      announceActivity(latest ? 'Último evento: ' + latest.message : emptyWorker);
       lastEvents = signature;
     }
     telemetry.textContent = data.events.some(isAdvisory) ? staleAdvisory :
@@ -681,19 +679,19 @@ def worker_activity(
         "<h1>Actividad</h1><h2>Actividad del worker y Chromium</h2>"
         "<p>Registro compartido por ambos motores. Se consulta cada cinco segundos.</p>"
         '<p id="worker-activity-status" role="status" aria-live="polite">'
-        + ("Último evento: " + escape(latest.message) if latest else "Sin eventos registrados.")
-        + '</p><p id="worker-activity-observed">Último evento recibido: '
+        + ("Último evento: " + escape(latest.message) if latest else _EMPTY_WORKER)
+        + '</p><p id="worker-activity-observed"'
         + (
-            escape(engine_view._time(latest.at))
+            ">Último evento recibido: " + escape(engine_view._time(latest.at))
             if latest
-            else "Sin evento recibido; estado UNKNOWN."
+            else " hidden>"
         )
         + '</p><p id="worker-activity-refreshed">Consulta inicial: '
         + escape(engine_view._time(snapshot.observed_at))
         + '</p><ol id="worker-events" tabindex="0" aria-label="Eventos recientes" aria-live="off">'
-        + (rows or "<li>Todavía no hay eventos registrados.</li>")
+        + rows
         + f'</ol><p id="chromium-telemetry-status">{escape(health)}</p>'
-        '<button id="worker-activity-refresh" type="button">Actualizar ahora</button>'
+        '<button id="worker-activity-refresh" type="button">Actualizar registro del worker</button>'
         '<button id="worker-activity-toggle" type="button" aria-pressed="false">'
         "Pausar actualizaciones del registro</button>"
         "<noscript>Actualice esta página para consultar los eventos nuevos.</noscript>"

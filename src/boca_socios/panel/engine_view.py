@@ -133,6 +133,15 @@ _SESSION_LABELS = {
     "has_target_url": "Enlace de acceso",
     "has_auth": "Respuesta de autenticación",
 }
+_SUMMARY_FIELDS = (
+    "state",
+    "phase",
+    "observed_at",
+    "event_state",
+    "queue_state",
+    "has_target_url",
+    "has_auth",
+)
 _LEGACY_RECOVERY = {
     "NONE": {
         "button": "Confirmar cierre previo del worker",
@@ -220,6 +229,15 @@ summary { min-height: 52px; padding-block: .5rem; cursor: pointer; box-sizing: b
 .engine-metrics dd { margin: 0; }
 .engine-session { border-top: 1px solid #aab4c1; padding-block: .7rem; }
 .engine-session dd { margin: 0 0 .7rem; overflow-wrap: anywhere; }
+.engine-session h4, .engine-session .session-summary { margin: .2rem 0; }
+.session-summary span:not(:last-child)::after { content: " · "; }
+.engine-session summary { align-content: center; }
+.activity-motors { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,25rem),1fr));
+  align-items: start; gap: 1rem; }
+.activity-motors > div { min-width: 0; }
+.activity-motors section { margin-block: .5rem; padding: .65rem; }
+.activity-motors h2, .activity-motors h3, .activity-motors p, .activity-motors dl { margin-block: .4rem; }
+.activity-motors ol { padding-inline-start: 1.45rem; }
 [data-engine] fieldset { margin-block: 1rem; min-width: 0; }
 [data-engine] h2, [data-engine] p { overflow-wrap: anywhere; }
 .engine-live-card { border: 2px solid #64748b; border-radius: .6rem;
@@ -258,6 +276,8 @@ _EVIDENCE_CONSTANTS = (
     + json.dumps(_EVIDENCE_NAMES, ensure_ascii=False)
     + ";\nconst sessionLabels = "
     + json.dumps(_SESSION_LABELS, ensure_ascii=False)
+    + ";\nconst summaryFields = "
+    + json.dumps(_SUMMARY_FIELDS)
     + ";\n"
 )
 _LIVE_CONSTANTS = (
@@ -391,13 +411,26 @@ _EMPTY_ENGINE_SCRIPT = """
   }
 """
 _SESSION_ROWS_SCRIPT = """
+  function summaryValue(item, field) {
+    if (field === 'state' && ['CLOSED','FAILED','STOPPED','CANCELLED'].includes(item.state))
+      return fieldValue(item, field) + ' (muestra histórica)';
+    if (field === 'phase') return item.phase === 'NO_EVENT_OBSERVED' ? aggregateNoEvent :
+      typeof item.phase === 'string' && Object.hasOwn(phaseNames, item.phase) ? phaseNames[item.phase] : 'Etapa sin verificar';
+    if (field === 'event_state' && !(typeof item.event_state === 'string' && Object.hasOwn(evidenceNames.event_state, item.event_state)))
+      return 'Evento sin comprobar';
+    if (field === 'queue_state' && !['QUEUE_ACTIVE','PREQUEUE','QUEUE_INACTIVE','ACCESS_OBSERVED'].includes(item.queue_state))
+      return 'Cola sin comprobar';
+    if (field === 'has_target_url') return item.has_target_url === true ?
+      'Enlace observado' : 'Sin enlace observado';
+    return fieldValue(item, field);
+  }
   function updateSessions(engine, sessions) {
     const list = document.getElementById(engine + '-sessions');
     if (!list) return;
     const existing = new Map(Array.from(list.children).map(item => [item.dataset.sessionId, item]));
     const retained = new Set();
     sessions.forEach((session, index) => {
-      if (!uuid.test(session.session_id)) return;
+      if (!uuid.test(session.session_id) || retained.has(session.session_id)) return;
       retained.add(session.session_id);
       let row = existing.get(session.session_id);
       if (!row) {
@@ -406,7 +439,16 @@ _SESSION_ROWS_SCRIPT = """
         row.dataset.sessionId = session.session_id;
         const heading = document.createElement('h4');
         heading.dataset.field = 'title';
-        row.append(heading);
+        const evidence = document.createElement('p');
+        evidence.className = 'session-summary';
+        for (const name of summaryFields) {
+          const value = document.createElement('span');
+          value.dataset.summaryField = name;
+          evidence.append(value);
+        }
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.dataset.field = 'disclose';
         const fields = document.createElement('dl');
         for (const [name, label] of Object.entries(sessionLabels)) {
           const term = document.createElement('dt');
@@ -415,15 +457,19 @@ _SESSION_ROWS_SCRIPT = """
           detail.dataset.field = name;
           fields.append(term, detail);
         }
-        row.append(fields);
+        details.append(summary, fields);
         const link = document.createElement('a');
         link.dataset.field = 'inspect';
         link.href = '/control/sesiones/' + session.session_id;
-        row.append(link);
+        row.append(heading, evidence, details, link);
         list.append(row);
       }
-      setText(row.querySelector('[data-field="title"]'), 'Sesión ' + (index + 1) +
-        ' · ' + (browserNames[session.browser] || 'Navegador desconocido'));
+      const name = (index + 1) + ' · ' + (browserNames[session.browser] || 'Navegador desconocido');
+      setText(row.querySelector('[data-field="title"]'), 'Sesión ' + name);
+      setText(row.querySelector('[data-field="disclose"]'), 'Ver observaciones de sesión ' +
+        name + ' · Motor ' + (engine === 'queues_tokens' ? 'A' : 'B'));
+      for (const field of summaryFields)
+        setText(row.querySelector('[data-summary-field="' + field + '"]'), summaryValue(session, field));
       for (const name of Object.keys(sessionLabels)) {
         setText(row.querySelector('[data-field="' + name + '"]'), fieldValue(session, name));
       }
@@ -538,6 +584,9 @@ _POLL_END = """
         const list = document.getElementById(engine + '-sessions');
         if (!list) continue;
         for (const row of list.children) {
+          const summaryState = row.querySelector('[data-summary-field="state"]');
+          if (summaryState && !summaryState.textContent.includes('histórica'))
+            setText(summaryState, summaryState.textContent + ' (muestra histórica; consulta fallida)');
           setText(row.querySelector('[data-field="countdown"]'), 'Sin fecha de apertura vigente');
         }
       }
@@ -948,12 +997,29 @@ def _session_value(session: Mapping[str, object], field: str) -> str:
     return _text(value)
 
 
+def _summary_value(session: Mapping[str, object], field: str) -> str:
+    value = str(session.get(field))
+    if field == "state" and value in {"CLOSED", "FAILED", "STOPPED", "CANCELLED"}:
+        return _session_value(session, field) + " (muestra histórica)"
+    if field == "phase":
+        return _LIVE_PHASE.get(value, "Etapa sin verificar")
+    if field == "event_state" and value not in _EVIDENCE_NAMES[field]:
+        return "Evento sin comprobar"
+    if field == "queue_state" and value not in _LIVE_QUEUE:
+        return "Cola sin comprobar"
+    if field == "has_target_url":
+        return "Enlace observado" if session.get(field) is True else "Sin enlace observado"
+    return _session_value(session, field)
+
+
 def _session_rows(engine: str, sessions: tuple[Mapping[str, object], ...]) -> str:
     rows = []
+    seen: set[str] = set()
     for index, session in enumerate(sessions, 1):
         session_id = _uuid(session.get("session_id"))
-        if session_id is None:
+        if session_id is None or session_id in seen:
             continue
+        seen.add(session_id)
         browser = _BROWSERS.get(str(session.get("browser")), "Navegador desconocido")
         fields = "".join(
             f'<dt>{label}</dt><dd data-field="{field}">'
@@ -961,9 +1027,15 @@ def _session_rows(engine: str, sessions: tuple[Mapping[str, object], ...]) -> st
             + "</dd>"
             for field, label in _SESSION_LABELS.items()
         )
+        summary = "".join(
+            f'<span data-summary-field="{field}">{escape(_summary_value(session, field))}</span>'
+            for field in _SUMMARY_FIELDS
+        )
         rows.append(
             f'<li class="engine-session" data-session-id="{session_id}">'
-            f'<h4 data-field="title">Sesión {index} · {browser}</h4><dl>{fields}</dl>'
+            f'<h4 data-field="title">Sesión {index} · {browser}</h4><p class="session-summary">{summary}</p>'
+            f'<details><summary data-field="disclose">Ver observaciones de sesión {index} · {browser} · '
+            f"Motor {'A' if engine == 'queues_tokens' else 'B'}</summary><dl>{fields}</dl></details>"
             f'<a data-field="inspect" href="/control/sesiones/{session_id}">'
             f"{_inspection_label(session, index, engine)}</a></li>"
         )
@@ -1382,9 +1454,16 @@ def activity_content(snapshot: Mapping[str, object], members: tuple[MemberView, 
         + _poll_status(snapshot)
     )
     content += "<h2>Sesiones observadas</h2>" + f"<p>{_SAMPLE_NOTICE}</p>"
-    content += "".join(
-        _section(name, item, "", {}, members, False, controls=False) + _history(name, item)
-        for name, item in engines.items()
+    content += (
+        '<div class="activity-motors">'
+        + "".join(
+            "<div>"
+            + _section(name, item, "", {}, members, False, controls=False)
+            + _history(name, item)
+            + "</div>"
+            for name, item in engines.items()
+        )
+        + "</div>"
     )
     return content
 

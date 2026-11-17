@@ -93,7 +93,7 @@ def test_activity_requires_owner_passkey_permission_and_same_origin(tmp_path: Pa
     assert code == 200
     assert b"Actividad del worker y Chromium" in body
     assert b"Pausar actualizaciones" in body
-    assert b"Actualizar ahora" in body
+    assert b"Actualizar registro del worker" in body
     assert b"/control/actividad.json" in body
     assert "script-src 'sha256-" in headers["Content-Security-Policy"]
 
@@ -166,17 +166,17 @@ const ids = new Map(); const nodes = id => {
 let cycle=0;
 require('node:vm').runInNewContext(script, {
   document: {getElementById:nodes, createElement:() => ({})}, setInterval() {},
-  fetch: async () => ({ok:cycle===0 || cycle===3,json:async()=>({events,
+  fetch: async () => ({ok:cycle!==2 && cycle!==3,json:async()=>({events:cycle===0 || cycle===5 ? [] : events,
     observed_at:'2026-11-16T12:00:00Z',chromium_telemetry:'degraded'})}),
 });
 (async () => {
   await new Promise(setImmediate);
   const out=[];
-  for (cycle=0;cycle<4;cycle++) {
+  for (cycle=0;cycle<6;cycle++) {
     if (cycle) await nodes('worker-activity-refresh').click();
     const status=nodes('worker-activity-status');
     out.push([status.textContent,status.writes,nodes('worker-activity-observed').textContent,
-      nodes('worker-events').children.map(item=>item.textContent)]);
+      nodes('worker-events').children.map(item=>item.textContent),nodes('worker-activity-observed').hidden]);
   }
   process.stdout.write(JSON.stringify(out));
 })().catch(()=>{process.exitCode=1;});
@@ -202,13 +202,42 @@ require('node:vm').runInNewContext(script, {
         check=True,
         timeout=10,
     )
-    first, failed, repeated, recovered = json.loads(result.stdout)
+    empty, first, failed, repeated, recovered, cleared = json.loads(result.stdout)
+    assert (
+        empty[0]
+        == cleared[0]
+        == "Todavía no hay registros del worker. Esto no permite concluir si hay eventos o cola en el sitio."
+    )
+    for item in (empty, cleared):
+        assert item[4] is True and item[3] == [] and item[2] == ""
     assert first[0] == recovered[0] == "Último evento: Acuse no verificado"
     assert "históricos" in failed[0] and failed[1] == repeated[1]
     assert all(
-        "07:00:00 ART" in state[2] and len(state[3]) == 1 and "Ejecutor" in state[3][0]
+        state[4] is False
+        and "07:00:00 ART" in state[2]
+        and len(state[3]) == 1
+        and "Ejecutor" in state[3][0]
         for state in (first, failed, repeated, recovered)
     )
+
+
+def test_initial_empty_worker_has_one_message_and_no_invented_observation():
+    from boca_socios.panel.private_ui import worker_activity
+    from boca_socios.panel.worker_activity import WorkerActivitySnapshot
+    from test_engine_view import Page
+
+    page = Page(
+        worker_activity(
+            WorkerActivitySnapshot("2026-11-16T12:00:00Z", "fixed_stages_only", "missing", ())
+        )
+    )
+    observed = next(
+        attrs for _, attrs in page.elements if attrs.get("id") == "worker-activity-observed"
+    )
+    assert "hidden" in observed and not page.text.get("worker-activity-observed")
+    assert not page.text.get("worker-events")
+    assert "no permite concluir" in page.text["worker-activity-status"]
+    assert "09:00:00 ART" in page.text["worker-activity-refreshed"]
 
 
 def test_activity_denies_owner_session_without_simulation_permission(tmp_path: Path) -> None:

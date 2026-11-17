@@ -356,6 +356,46 @@ def test_start_forms_scope_member_and_counts_to_the_chosen_engine() -> None:
             assert fields[browser]["id"] in labels
 
 
+def test_session_evidence_stays_readable_with_native_details_closed():
+    from boca_socios.panel.engine_view import _SESSION_LABELS
+
+    session_id = str(uuid4())
+    snapshot = _evidence_snapshot(
+        {
+            "session_id": session_id,
+            "browser": "chromium",
+            "state": "CLOSED",
+            "phase": "unknown-sensitive-marker",
+            "event_state": "NO_EVENT_CONFIRMED",
+            "queue_state": "QUEUE_INACTIVE",
+            "has_auth": True,
+        }
+    )
+    _, page, _ = render(snapshot=snapshot, activity=True)
+    row = re.search(
+        rf'<li class="engine-session" data-session-id="{session_id}">(.*?)</li>',
+        page.decode(),
+        re.S,
+    )
+    assert row is not None
+    details = re.search(r"<details>(<summary[^>]*>.*?</summary>)(.*?)</details>", row[1], re.S)
+    assert details is not None and "sesión 1" in details[1].lower() and "Chromium" in details[1]
+    assert re.findall(r'<dd data-field="([^"]+)"', details[2]) == list(_SESSION_LABELS)
+    visible = row[1].replace(details[0], "")
+    assert '<h4 data-field="title">' in visible and 'data-field="inspect"' in visible
+    assert set(re.findall(r'data-summary-field="([^"]+)"', visible)) == {
+        "state",
+        "phase",
+        "observed_at",
+        "event_state",
+        "queue_state",
+        "has_target_url",
+        "has_auth",
+    }
+    assert "histórica" in visible and "no hay eventos" in visible and "no confirma" in visible
+    assert "unknown-sensitive-marker" not in visible
+
+
 def test_each_stop_form_carries_its_own_activation_fence() -> None:
     activations = {"queues_tokens": str(uuid4()), "browsers_members": str(uuid4())}
     page, _, operations = render(
@@ -731,11 +771,11 @@ const context = {
   }, addEventListener() {},
     createElement(tag) {
       if (input.rotation) return {
-        dataset: {}, children: [], textContent: '',
+        tag, dataset: {}, children: [], textContent: '',
         append(...children) { this.children.push(...children); },
         querySelector(selector) {
-          const field = selector.match(/data-field="([^"]+)"/)[1];
-          const find = node => node.dataset.field === field ? node :
+          const match = selector.match(/data-(summary-)?field="([^"]+)"/);
+          const find = node => (match ? node.dataset[match[1] ? 'summaryField' : 'field'] === match[2] : node.tag === selector) ? node :
             node.children.map(find).find(Boolean);
           return find(this);
         },
@@ -763,6 +803,7 @@ const context = {
 vm.runInNewContext(input.script, context, {timeout: 1000});
 (async () => {
   const results = [];
+  let opened, focused;
   for (snapshot of input.snapshots) {
     await element('engines-refresh').click();
     const section = element('legacy-worker-recovery');
@@ -784,6 +825,19 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
     if (input.rotation) result.inspectionLinks = element('queues_tokens-sessions').children
       .map(item => {const link = item.querySelector('[data-field="inspect"]');
         return {href: link.href, label: link.textContent};});
+    if (input.rotation) {
+      const rows = element('queues_tokens-sessions').children;
+      if (!opened && rows.length && rows[0].querySelector('details')) {
+        opened = rows[0].querySelector('details'); opened.open = true;
+        focused = rows[0].querySelector('summary'); context.document.activeElement = focused;
+      }
+      result.disclosures = rows.map(r => ({
+        id: r.dataset.sessionId, open: Boolean(r.querySelector('details')?.open),
+        retained: r.querySelector('details') === opened && opened !== undefined,
+        focused: r.querySelector('summary') === context.document.activeElement,
+        state: r.querySelector('[data-summary-field="state"]')?.textContent
+      }));
+    }
     if (row) for (const field of ['outcome', 'queue_state', 'phase', 'event_state', 'event_id',
       'reason', 'configured_url', 'navigation_attempt', 'display_url', 'inspect',
       'queue_opening_at', 'countdown', 'expected_service_time']) {
@@ -821,6 +875,49 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
         timeout=10,
     )
     return json.loads(completed.stdout)
+
+
+def test_keyed_session_keeps_open_disclosure_and_focus_while_new_session_stays_closed():
+    first, second = str(uuid4()), str(uuid4())
+    snapshots = [_evidence_snapshot({"session_id": first, "state": "ACTIVE"})]
+    newer = copy.deepcopy(snapshots[0])
+    newer["engines"][0]["sessions"][0]["state"] = "CLOSED"
+    newer["engines"][0]["sessions"].append({"session_id": second, "state": "ACTIVE"})
+    last = copy.deepcopy(newer)
+    last["engines"][0]["sessions"].pop(0)
+    before, after, removed = _run_poll_script([*snapshots, newer, last], rotation=True)["results"]
+    assert before["disclosures"][0]["open"] and before["disclosures"][0]["focused"]
+    older, added = after["disclosures"]
+    assert (
+        older["retained"] and older["open"] and older["focused"] and "histórica" in older["state"]
+    )
+    assert added["id"] == second and not added["open"] and not added["focused"]
+    assert [r["id"] for r in removed["disclosures"]] == [second]
+
+
+def test_failed_poll_marks_visible_session_summary_historical_and_recovers_without_closing_it():
+    snap = _evidence_snapshot({"session_id": str(uuid4()), "state": "ACTIVE"})
+    results = _run_poll_script([snap, "network-error", "network-error", snap], rotation=True)[
+        "results"
+    ]
+    rows = [result["disclosures"][0] for result in results]
+    assert rows[0]["state"] == rows[3]["state"] == "Activa"
+    assert "histórica" in rows[1]["state"] and rows[1]["state"] == rows[2]["state"]
+    assert all(row["open"] and row["focused"] for row in rows)
+
+
+def test_duplicate_or_invalid_session_ids_never_create_duplicate_disclosures():
+    ident = str(uuid4())
+    snap = _evidence_snapshot({"session_id": ident, "state": "ACTIVE"})
+    snap["engines"][0]["sessions"] += [{"session_id": ident}, {"session_id": "invalid"}]
+    parsed, _, _ = render(snapshot=snap, activity=True)
+    assert [
+        attrs.get("data-session-id")
+        for tag, attrs in parsed.elements
+        if tag == "li" and "data-session-id" in attrs
+    ] == [ident]
+    polled = _run_poll_script([snap], rotation=True)["results"][0]["disclosures"]
+    assert [row["id"] for row in polled] == [ident]
 
 
 @pytest.mark.parametrize(
