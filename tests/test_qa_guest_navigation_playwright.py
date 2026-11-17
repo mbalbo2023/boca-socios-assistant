@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,17 @@ import qa_guest_navigation_playwright as runner  # noqa: E402
 from qa_guest_navigation_playwright import (  # noqa: E402
     allow_boca_qa_request,
     local_synthetic_panel,
+)
+
+HISTORICAL_REVIEWED_BLOBS = (
+    ("src/boca_socios/panel/private_http.py", "9e81b3d0ff611be2cb7499d8c39c6c3b328036c1"),
+    ("src/boca_socios/panel/private_ui.py", "91b0fcd44c584ca8dc52a53f0bd2358f17878abd"),
+    ("src/boca_socios/panel/worker_activity.py", "fc631e0748b80842fca5ce09b1efef7a46adc316"),
+    ("tests/test_guest_readonly_dashboard.py", "38615a314c161b93575ba9839fbfb19aeeeaba4a"),
+    ("tests/test_private_engine_controls.py", "d8458fa4bf8c3ee0dee7d195bc00f5c7164e4236"),
+    ("tests/test_site_url_configuration.py", "5800fb619b97d03690a781d9a08a9f1742fe537d"),
+    ("scripts/qa_guest_navigation_playwright.py", "9c1aaf49507742c9046e77cf62f86f78da557a48"),
+    ("tests/test_qa_guest_navigation_playwright.py", "19d83ac60b1b18b6a7c6bb93656864ab451ed125"),
 )
 
 
@@ -102,29 +114,18 @@ def test_manual_workflow_is_branch_owner_only_and_pins_eight_reviewed_blobs() ->
     assert "timeout-minutes: 8" in job
     assert "uv sync --frozen --group browser" in job
     assert "python scripts/qa_guest_navigation_playwright.py" in job
-    for blob in (
-        "9e81b3d0ff611be2cb7499d8c39c6c3b328036c1",
-        "91b0fcd44c584ca8dc52a53f0bd2358f17878abd",
-        "fc631e0748b80842fca5ce09b1efef7a46adc316",
-        "38615a314c161b93575ba9839fbfb19aeeeaba4a",
-        "d8458fa4bf8c3ee0dee7d195bc00f5c7164e4236",
-        "5800fb619b97d03690a781d9a08a9f1742fe537d",
-    ):
-        assert blob in job
-    root = Path(__file__).resolve().parents[1]
-    for path in (
-        "scripts/qa_guest_navigation_playwright.py",
-        "tests/test_qa_guest_navigation_playwright.py",
-    ):
-        blob = subprocess.run(  # noqa: S603 - fixed Git hash of reviewed local source
-            ["/usr/bin/git", "hash-object", path],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-        assert blob in job
+    paths = re.search(r"paths=\(\n(.*?)\n\s*\)", job, re.S)
+    blobs = re.search(r"blobs=\(\n(.*?)\n\s*\)", job, re.S)
+    assert paths is not None and blobs is not None
+    assert tuple(line.strip() for line in paths[1].splitlines()) == tuple(
+        path for path, _ in HISTORICAL_REVIEWED_BLOBS
+    )
+    assert tuple(line.strip() for line in blobs[1].splitlines()) == tuple(
+        blob for _, blob in HISTORICAL_REVIEWED_BLOBS
+    )
+    assert "permissions:\n  contents: read\n" in workflow
+    assert "permissions:" not in job
+    assert "persist-credentials: false" in job
     assert "docker " not in job.lower()
     assert "ssh " not in job.lower()
     assert "secrets." not in job.lower()
@@ -137,16 +138,7 @@ def test_workflow_blob_gate_rejects_product_and_harness_drift(tmp_path: Path) ->
         "      - name: Reject any drift in eight independently reviewed blobs\n", 1
     )[1].split("      - name:", 1)[0]
     gate = textwrap.dedent(section.split("        run: |\n", 1)[1])
-    paths = (
-        "src/boca_socios/panel/private_http.py",
-        "src/boca_socios/panel/private_ui.py",
-        "src/boca_socios/panel/worker_activity.py",
-        "tests/test_guest_readonly_dashboard.py",
-        "tests/test_private_engine_controls.py",
-        "tests/test_site_url_configuration.py",
-        "scripts/qa_guest_navigation_playwright.py",
-        "tests/test_qa_guest_navigation_playwright.py",
-    )
+    paths = tuple(path for path, _ in HISTORICAL_REVIEWED_BLOBS)
     repository = tmp_path / "isolated-git"
     repository.mkdir()
 
@@ -171,9 +163,9 @@ def test_workflow_blob_gate_rejects_product_and_harness_drift(tmp_path: Path) ->
     git("add", "--all")
     git("commit", "-qm", "exact source")
 
-    def check() -> subprocess.CompletedProcess[str]:
+    def check(script: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(  # noqa: S603 - reviewed workflow shell, isolated fixture
-            ["/usr/bin/bash", "-e", "-c", gate],
+            ["/usr/bin/bash", "-e", "-c", script],
             cwd=repository,
             env=os.environ | {"GITHUB_SHA": git("rev-parse", "HEAD")},
             capture_output=True,
@@ -182,23 +174,35 @@ def test_workflow_blob_gate_rejects_product_and_harness_drift(tmp_path: Path) ->
             timeout=5,
         )
 
-    accepted = check()
+    historical = check(gate)
+    changed_paths = {
+        path for path, pin in HISTORICAL_REVIEWED_BLOBS if git("rev-parse", f"HEAD:{path}") != pin
+    }
+    assert changed_paths  # This test's own revised source differs from its frozen historical pin.
+    assert (historical.returncode != 0) == bool(changed_paths)
+    assert "state=PASS" not in historical.stdout
+    # Only this in-memory fixture gate is repinned. The workflow stays frozen.
+    candidate_gate = gate
+    for path, pin in HISTORICAL_REVIEWED_BLOBS:
+        assert candidate_gate.count(pin) == 1
+        candidate_gate = candidate_gate.replace(pin, git("rev-parse", f"HEAD:{path}"), 1)
+    accepted = check(candidate_gate)
     assert accepted.returncode == 0, accepted.stderr
     assert "BOCA_GUEST_CANDIDATE_BLOBS state=PASS files=8" in accepted.stdout
     (repository / paths[0]).write_text("def unauthorized_change(): pass\n")
     git("add", "--all")
     git("commit", "-qm", "drift")
-    rejected = check()
+    rejected = check(candidate_gate)
     assert rejected.returncode != 0
     assert "state=PASS" not in rejected.stdout
     shutil.copyfile(root / paths[0], repository / paths[0])
     git("add", "--all")
     git("commit", "-qm", "restore product")
-    assert check().returncode == 0
+    assert check(candidate_gate).returncode == 0
     (repository / paths[6]).write_text("def unreviewed_harness_change(): pass\n")
     git("add", "--all")
     git("commit", "-qm", "harness drift")
-    rejected_harness = check()
+    rejected_harness = check(candidate_gate)
     assert rejected_harness.returncode != 0
     assert "state=PASS" not in rejected_harness.stdout
 
