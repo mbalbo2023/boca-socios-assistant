@@ -58,7 +58,7 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
     # Telegram proves release lineage before its separate one-lease backend.
     assert "protected-go-prepare|lifecycle-apply)" in gate
     assert (
-        "telegram-schema-observe|telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender|telegram-prepare-diagnose|telegram-public-boundary-observe)"
+        "telegram-schema-observe|telegram-migrate|telegram-install-direct|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender|telegram-prepare-diagnose|telegram-public-boundary-observe)"
         in gate
     )
     telegram_review = _step("Prove Telegram release ancestry and build installed transaction")
@@ -410,9 +410,12 @@ def test_pr_runner_disposable_docker_probe_checks_real_inspect_defaults() -> Non
 def test_telegram_migrate_routes_only_through_installed_transaction():
     workflow = _workflow()
     gate = _step("Require verified protected environment and matching main commit")
-    assert '"$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-activate' in gate
     assert (
-        "telegram-schema-observe|telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender|telegram-prepare-diagnose|telegram-public-boundary-observe)"
+        '"$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-install-direct || "$BOCA_OPERATION" = telegram-activate'
+        in gate
+    )
+    assert (
+        "telegram-schema-observe|telegram-migrate|telegram-install-direct|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender|telegram-prepare-diagnose|telegram-public-boundary-observe)"
         in gate
     )
     assert "telegram-migrate|telegram-install|telegram-verify|telegram-test)" not in gate

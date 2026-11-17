@@ -253,6 +253,7 @@ class InstalledMaintenance:
         self._created_volume = False
         self._created_network: str | None = None
         self.migration_helper_retired = True
+        self.direct_writer_retired = True
         self.recipient_observation: dict[str, Any] = {
             "id": None,
             "create_attempted": False,
@@ -302,6 +303,8 @@ class InstalledMaintenance:
                 RECIPIENT_OBSERVE_PROGRAM,
             )
             effects.update(create_attempted=True, retirement="INDETERMINATE")
+        if operation == "install-direct":
+            self.direct_writer_retired = False
         ident = cleanup._docker(*argv[1:]).strip()
         if re.fullmatch(r"[a-f0-9]{64}", ident) is None:
             raise MaintenanceError("telegram_maintenance_creation_uncertain")
@@ -383,6 +386,8 @@ class InstalledMaintenance:
                 if observe:
                     effects["retirement"] = "RETIRED"
             self.context.check_binding()
+            if operation == "install-direct" and verified:
+                self.direct_writer_retired = True
 
     def _migrate_schema(self) -> dict[str, Any]:
         """Run the installed fixed CLI; restoration requires proven writer retirement."""

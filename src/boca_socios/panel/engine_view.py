@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from boca_socios.panel.members import MemberView
 from boca_socios.panel.private_token_view import ART_TIME_SCRIPT
+from boca_socios.panel.worker_activity import _GUEST_PUBLIC_LABELS
 
 _ENGINES = {
     "queues_tokens": "colas y tokens",
@@ -151,6 +152,56 @@ _LEGACY_RECOVERY = {
         "Puede pedir otra confirmación de cierre.",
     },
 }
+_LIVE_EVENT = {
+    "NO_EVENT_CONFIRMED": "informa que no hay evento",
+    "EVENT_VERIFIED": ": evento identificado",
+    "EVENT_ANNOUNCED": ": evento anunciado; sin verificar",
+}
+_LIVE_PHASE = {
+    **_PHASES,
+    # Only the per-session event field may assert that the source reported absence.
+    "NO_EVENT_OBSERVED": "Comprobación de evento registrada; consulte las sesiones",
+}
+_LIVE_QUEUE = {
+    name: _PHASES[name]
+    for name in ("QUEUE_ACTIVE", "PREQUEUE", "QUEUE_INACTIVE", "ACCESS_OBSERVED")
+}
+_LIVE_ERRORS = {
+    name: _PHASES[name]
+    for name in (
+        "WORKER_RECEIPT_UNVERIFIED",
+        "ENGINE_FAILED",
+        "SESSION_FAILED",
+        "CLOSE_UNVERIFIED",
+        "CHALLENGE",
+        "CHECK_FAILED",
+    )
+}
+_LIVE_SOURCE = {
+    "owner": "Panel",
+    "host": "Ejecutor",
+    "simulation": "Simulación",
+    "chromium": "Chromium",
+}
+_LIVE_WORKER_ADVISORY = "Chromium: sólo hay telemetría antigua; no confirma un proceso activo."
+# The activity projection emits only fixed labels. Also enforce that boundary
+# here; the guest catalog covers reusable worker messages, not owner receipts.
+_LIVE_WORKER_LABELS = sorted(
+    {
+        *_GUEST_PUBLIC_LABELS,
+        "Solicitado: inicio del bot.",
+        "Solicitado: detención del bot.",
+        "Solicitado: inicio de Chromium.",
+        "Solicitado: detención de Chromium.",
+        "Bot: comprobación finalizada; detención automática solicitada.",
+        "Simulación local: trabajo finalizado; detención automática solicitada.",
+        "Ejecutor: solicitud recibida, verificando el servicio Boca.",
+        "Ejecutor: resultado indeterminado, no repetir sin conciliación.",
+        "Ejecutor: resultado físico confirmado en el momento del recibo.",
+        "Ejecutor: solicitud rechazada sin aplicar cambios.",
+        "Ejecutor: fallo del worker confirmado.",
+    }
+)
 _STYLE = """
 summary { min-height: 52px; padding-block: .5rem; cursor: pointer; box-sizing: border-box; }
 [data-engine] { border: 1px solid #aab4c1; border-radius: .5rem;
@@ -162,6 +213,17 @@ summary { min-height: 52px; padding-block: .5rem; cursor: pointer; box-sizing: b
 .engine-session dd { margin: 0 0 .7rem; overflow-wrap: anywhere; }
 [data-engine] fieldset { margin-block: 1rem; min-width: 0; }
 [data-engine] h2, [data-engine] p { overflow-wrap: anywhere; }
+.engine-live-card { border: 2px solid #64748b; border-radius: .6rem;
+  padding: .85rem; margin-block: 1rem; overflow-wrap: anywhere; }
+.engine-live-card h2, .engine-live-card h3 { margin: 0 0 .4rem; }
+.engine-live-card p, .engine-live-card dl, .engine-live-card ol { margin: .3rem 0 .65rem; }
+.engine-live-card dl { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: .25rem .65rem; }
+.engine-live-card dt { font-weight: 650; }
+.engine-live-card dd { margin: 0 0 .2rem; }
+.engine-live-card a:not([hidden]) { display: inline-flex; align-items: center; min-height: 44px; }
+.engine-live-card a:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.engine-live-records { padding-inline-start: 1.35rem; }
 """
 
 _ENGINE_CONSTANTS = (
@@ -185,6 +247,22 @@ _EVIDENCE_CONSTANTS = (
     + json.dumps(_EVIDENCE_NAMES, ensure_ascii=False)
     + ";\nconst sessionLabels = "
     + json.dumps(_SESSION_LABELS, ensure_ascii=False)
+    + ";\n"
+)
+_LIVE_CONSTANTS = (
+    "const liveLabels = "
+    + json.dumps(
+        {
+            "phases": _LIVE_PHASE,
+            "events": _LIVE_EVENT,
+            "queues": _LIVE_QUEUE,
+            "errors": _LIVE_ERRORS,
+            "sources": _LIVE_SOURCE,
+            "workerLabels": _LIVE_WORKER_LABELS,
+            "workerAdvisory": _LIVE_WORKER_ADVISORY,
+        },
+        ensure_ascii=False,
+    )
     + ";\n"
 )
 _POLL_START = """
@@ -437,6 +515,7 @@ _POLL_END = """
       setText(document.getElementById('engines-limit'), String(data.context_limit));
       setText(live, 'Estados y sesiones actualizados.');
       setText(checked, 'Última consulta: ' + formatPrivateTime(data.observed_at));
+      return data;
     } catch (_) {
       for (const engine of Object.keys(engineNames)) {
         const state = document.getElementById(engine + '-state');
@@ -452,22 +531,179 @@ _POLL_END = """
       setText(live, 'No se pudo actualizar. Los estados y sesiones anteriores son históricos; '
         + 'el estado actual no está verificado.');
       setText(checked, 'Última consulta fallida.');
+      return null;
     } finally { pending = false; }
   }
-  document.getElementById('engines-refresh').addEventListener('click', refreshEngines);
-  setInterval(() => { if (!document.hidden) refreshEngines(); }, 5000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshEngines(); });
-  if (!document.hidden) refreshEngines();
+"""
+_POLL_TRIGGER = """
+  document.getElementById('engines-refresh').addEventListener('click', refreshPage);
+  setInterval(() => { if (!document.hidden) refreshPage(); }, 5000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshPage(); });
+  if (!document.hidden) refreshPage();
 })();
 """
+_LIVE_MOTOR_SCRIPT = r"""
+  const motor = Object.keys(engineNames).find(name =>
+    document.getElementById(name + '-live-card'));
+  const card = field => document.getElementById(motor + '-live-' + field);
+  const put = (field, value) => setText(card(field), value);
+  const known = (labels, code) => typeof code === 'string' && Object.hasOwn(labels, code);
+  const workerLabels = new Set(liveLabels.workerLabels);
+  let activityPending = false;
+  function stamp(value) {
+    return typeof value === 'string' &&
+      /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|[+-]\d\d:\d\d)$/.test(value)
+      && Number.isFinite(Date.parse(value));
+  }
+  function projection(item) {
+    let latest = null, navigation = null, revealed = null;
+    let targetCount = 0, authCount = 0, authenticating = 0, domUnverified = 0;
+    const events = new Map(), queues = new Map();
+    const phase = known(liveLabels.phases, item.phase) ? liveLabels.phases[item.phase] : 'Etapa sin verificar';
+    let error = known(liveLabels.errors, item.phase) ? phase : '';
+    item.sessions.forEach((session, index) => {
+      if (!uuid.test(session.session_id)) return;
+      if (!error && known(liveLabels.errors, session.phase)) error = liveLabels.errors[session.phase];
+      const active = session.state === 'ACTIVE';
+      if ((active || session.state === 'OBSERVED') &&
+          session.phase === 'AUTHENTICATING') authenticating++;
+      if (session.has_auth === true || session.phase === 'AUTH_TOKENS_OBSERVED_DOM_UNVERIFIED') {
+        domUnverified++;
+      }
+      if (stamp(session.observed_at)) {
+        const time = Date.parse(session.observed_at);
+        if (!latest || time > Date.parse(latest)) latest = session.observed_at;
+        const history = active ? '' : ' (muestra histórica)';
+        for (const [samples, code, label] of [
+          [events, session.event_state, known(liveLabels.events, session.event_state) ?
+            liveLabels.events[session.event_state] : null],
+          [queues, session.queue_state, known(liveLabels.queues, session.queue_state) ?
+            ': ' + liveLabels.queues[session.queue_state] : null],
+        ]) {
+          const previous = samples.get(code);
+          if (label && (!previous || (active && !previous.active) ||
+              (active === previous.active && time > previous.time))) {
+            samples.set(code, {active, time, text: 'Sesión ' + (index + 1) +
+              (label.startsWith(':') ? label : ' ' + label) + history});
+          }
+        }
+      }
+      const attempt = session.navigation_attempt;
+      if (attempt && known(evidenceNames.purpose, attempt.purpose) &&
+          known(evidenceNames.result, attempt.result) &&
+          (!navigation || (stamp(attempt.started_at) &&
+            (!stamp(navigation.started_at) || Date.parse(attempt.started_at) > Date.parse(navigation.started_at))))) {
+        navigation = attempt;
+      }
+      if (session.has_target_url === true) targetCount++;
+      if (session.has_auth === true) authCount++;
+      if (!revealed && (session.has_target_url === true || session.has_auth === true)) {
+        revealed = session.session_id;
+      }
+    });
+    const tokens = [];
+    if (targetCount) tokens.push('Enlaces observados: ' + targetCount);
+    if (authCount) tokens.push('Respuesta de autenticación observada en ' + authCount + ' sesión(es)');
+    const authentication = [];
+    if (authenticating) authentication.push(phaseNames.AUTHENTICATING + ': ' + authenticating + ' sesión(es)');
+    if (domUnverified) authentication.push(
+      phaseNames.AUTH_TOKENS_OBSERVED_DOM_UNVERIFIED + ': ' + domUnverified + ' sesión(es)');
+    if (!error && ['FAILED', 'INDETERMINATE', 'UNCERTAIN'].includes(item.state)) error = state(item.state);
+    return {
+      state: state(item.state), phase,
+      contexts: number(item.requested_contexts) + ' solicitados · ' + number(item.created) +
+        ' creados · ' + number(item.active) + ' activos',
+      'motor-time': stamp(item.updated_at) ? formatPrivateTime(item.updated_at) : 'Sin observación',
+      'page-time': latest ? formatPrivateTime(latest) : 'Sin observación',
+      event: [...events.values()].map(sample => sample.text).join(' · ') || 'No comprobado',
+      queue: [...queues.values()].map(sample => sample.text).join(' · ') || 'No comprobado',
+      tokens: tokens.join(' · ') || 'Sin tokens ni enlaces comprobados',
+      authentication: authentication.join(' · ') || 'Sin observación de autenticación',
+      navigation: navigation ? evidenceNames.purpose[navigation.purpose] + ' · ' +
+        evidenceNames.result[navigation.result] : 'Sin intento observado',
+      error: error || 'Sin bloqueo informado', revealed
+    };
+  }
+  function updateMotorCard(data) {
+    if (data === undefined) return; // The existing motor request is still pending.
+    const item = data && stamp(data.observed_at) && data.engines.find(entry => entry.engine === motor);
+    if (!item) {
+      put('motor-status', 'Consulta del motor no verificable. El estado mostrado es histórico.');
+      return;
+    }
+    const {revealed, ...fields} = projection(item);
+    for (const [field, value] of Object.entries(fields)) put(field, value);
+    const link = card('inspect');
+    if (revealed) {
+      if (link.dataset.sessionId !== revealed) {
+        link.href = '/control/sesiones/' + revealed;
+        link.dataset.sessionId = revealed;
+      }
+      if (link.hidden) link.hidden = false;
+    } else if (!link.hidden) {
+      link.hidden = true;
+      link.href = '';
+      delete link.dataset.sessionId;
+    }
+    put('motor-query', formatPrivateTime(data.observed_at));
+    put('motor-status', 'Consulta del motor disponible.');
+  }
+  async function refreshWorkerFeed() {
+    if (activityPending) return;
+    activityPending = true;
+    try {
+      const response = await fetch('/control/actividad.json', {
+        credentials: 'same-origin', cache: 'no-store', redirect: 'error'});
+      if (!response.ok) throw new Error('worker activity unavailable');
+      const data = await response.json();
+      if (!data || !stamp(data.observed_at) || !Array.isArray(data.events) ||
+          data.events.length > 30) throw new Error('invalid activity');
+      const records = data.events.filter(event => event && stamp(event.at) &&
+        known(liveLabels.sources, event.source) && workerLabels.has(event.message))
+        .slice(-5).reverse();
+      // The snapshot stamps this diagnostic with the query time, not the time
+      // of worker activity. Keep it out of the five chronological records.
+      const stale = data.events.some(event => event && event.source === 'chromium' &&
+        event.level === 'warning' && event.message === liveLabels.workerAdvisory);
+      const advisory = card('worker-advisory');
+      setText(advisory, stale ?
+        'Diagnóstico de la última consulta válida: ' + liveLabels.workerAdvisory : '');
+      if (advisory.hidden !== !stale) advisory.hidden = !stale;
+      for (let i = 0; i < 5; i++) {
+        const node = card('record-' + i);
+        const item = records[i];
+        if (item) setText(node, formatPrivateTime(item.at) + ' · ' +
+          liveLabels.sources[item.source] + ' · ' + item.message);
+        if (node.hidden !== !item) node.hidden = !item;
+      }
+      put('worker-time', formatPrivateTime(data.observed_at));
+      put('worker-status', records.length ?
+        'Registros del worker compartido disponibles.' : 'Aún no hay actividad verificable.');
+    } catch (_) {
+      put('worker-status', 'Actividad del worker no verificable. Los registros mostrados son históricos.');
+    } finally { activityPending = false; }
+  }
+  async function refreshPage() {
+    await Promise.all([refreshEngines().then(updateMotorCard), refreshWorkerFeed()]);
+  }
+"""
+_MOTOR_BODY = (
+    _POLL_START + _SESSION_FIELDS_SCRIPT + _EMPTY_ENGINE_SCRIPT + _SESSION_ROWS_SCRIPT + _POLL_END
+)
 _SCRIPT = (
     _ENGINE_CONSTANTS
     + _EVIDENCE_CONSTANTS
-    + _POLL_START
-    + _SESSION_FIELDS_SCRIPT
-    + _EMPTY_ENGINE_SCRIPT
-    + _SESSION_ROWS_SCRIPT
-    + _POLL_END
+    + _MOTOR_BODY
+    + "const refreshPage = refreshEngines;\n"
+    + _POLL_TRIGGER
+)
+_MOTOR_SCRIPT = (
+    _ENGINE_CONSTANTS
+    + _EVIDENCE_CONSTANTS
+    + _LIVE_CONSTANTS
+    + _MOTOR_BODY
+    + _LIVE_MOTOR_SCRIPT
+    + _POLL_TRIGGER
 )
 _CONTROL_SCRIPT = (
     _ENGINE_CONSTANTS
@@ -475,9 +711,12 @@ _CONTROL_SCRIPT = (
     + _EMPTY_ENGINE_SCRIPT
     + "function updateSessions() {}\n"
     + _POLL_END
+    + "const refreshPage = refreshEngines;\n"
+    + _POLL_TRIGGER
 )
 # Each native redirect includes this script; omit indentation in the emitted bytes.
 _SCRIPT = "\n".join(line.strip() for line in _SCRIPT.splitlines())
+_MOTOR_SCRIPT = "\n".join(line.strip() for line in _MOTOR_SCRIPT.splitlines())
 _CONTROL_SCRIPT = "\n".join(line.strip() for line in _CONTROL_SCRIPT.splitlines())
 
 
@@ -486,7 +725,9 @@ def csp() -> str:
     from boca_socios.panel.private_ui import CSP, _hash
 
     return CSP.replace(
-        "script-src ", f"script-src 'sha256-{_hash(_SCRIPT)}' 'sha256-{_hash(_CONTROL_SCRIPT)}' "
+        "script-src ",
+        f"script-src 'sha256-{_hash(_SCRIPT)}' 'sha256-{_hash(_CONTROL_SCRIPT)}' "
+        f"'sha256-{_hash(_MOTOR_SCRIPT)}' ",
     ).replace("style-src ", f"style-src 'sha256-{_hash(_STYLE)}' ")
 
 
@@ -805,6 +1046,182 @@ def _distribution(item: Mapping[str, object]) -> str:
     )
 
 
+def _live_stamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|[+-]\d\d:\d\d)", value
+    ):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _live_projection(item: Mapping[str, object]) -> tuple[dict[str, str], str | None]:
+    event_samples: dict[str, tuple[tuple[bool, datetime], str]] = {}
+    queue_samples: dict[str, tuple[tuple[bool, datetime], str]] = {}
+    latest: datetime | None = None
+    navigation: Mapping[str, object] | None = None
+    navigation_time: datetime | None = None
+    inspection = None
+    targets = auth = authenticating = dom_unverified = 0
+    phase = str(item.get("phase"))
+    state = str(item.get("state"))
+    error = _LIVE_ERRORS.get(phase)
+    for index, session in enumerate(_entries(item.get("sessions")), 1):
+        session_id = _uuid(session.get("session_id"))
+        if session_id is None:
+            continue
+        session_phase = str(session.get("phase"))
+        session_state = session.get("state")
+        error = error or _LIVE_ERRORS.get(session_phase)
+        active = session_state == "ACTIVE"
+        if (active or session_state == "OBSERVED") and session_phase == "AUTHENTICATING":
+            authenticating += 1
+        has_auth = session.get("has_auth") is True
+        if has_auth or session_phase == "AUTH_TOKENS_OBSERVED_DOM_UNVERIFIED":
+            dom_unverified += 1
+        when = _live_stamp(session.get("observed_at"))
+        if when is not None:
+            if latest is None or when > latest:
+                latest = when
+            history = "" if active else " (muestra histórica)"
+            rank = (active, when)
+            for samples, codes, field in (
+                (event_samples, _LIVE_EVENT, "event_state"),
+                (queue_samples, _LIVE_QUEUE, "queue_state"),
+            ):
+                code = str(session.get(field))
+                label = codes.get(code)
+                previous = samples.get(code)
+                if label is not None and (previous is None or rank > previous[0]):
+                    separator = (
+                        ": " if field == "queue_state" else "" if label.startswith(":") else " "
+                    )
+                    samples[code] = (rank, f"Sesión {index}{separator}{label}{history}")
+        attempt = session.get("navigation_attempt")
+        if (
+            isinstance(attempt, Mapping)
+            and str(attempt.get("purpose")) in _EVIDENCE_NAMES["purpose"]
+            and str(attempt.get("result")) in _EVIDENCE_NAMES["result"]
+        ):
+            when = _live_stamp(attempt.get("started_at"))
+            if navigation is None or (
+                when is not None and (navigation_time is None or when > navigation_time)
+            ):
+                navigation, navigation_time = attempt, when
+        has_target = session.get("has_target_url") is True
+        targets += has_target
+        auth += has_auth
+        if inspection is None and (has_target or has_auth):
+            inspection = session_id
+    tokens = []
+    if targets:
+        tokens.append(f"Enlaces observados: {targets}")
+    if auth:
+        tokens.append(f"Respuesta de autenticación observada en {auth} sesión(es)")
+    authentication = [
+        f"{_PHASES[code]}: {count} sesión(es)"
+        for code, count in (
+            ("AUTHENTICATING", authenticating),
+            ("AUTH_TOKENS_OBSERVED_DOM_UNVERIFIED", dom_unverified),
+        )
+        if count
+    ]
+    if error is None and state in {"FAILED", "INDETERMINATE", "UNCERTAIN"}:
+        error = _STATES[state]
+    return (
+        {
+            "state": _STATES.get(state, "Estado desconocido"),
+            "phase": _LIVE_PHASE.get(phase, "Etapa sin verificar"),
+            "contexts": (
+                f"{_number(item.get('requested_contexts'))} solicitados · "
+                f"{_number(item.get('created'))} creados · {_number(item.get('active'))} activos"
+            ),
+            "motor-time": _time(item.get("updated_at"))
+            if _live_stamp(item.get("updated_at"))
+            else "Sin observación",
+            "page-time": _time(latest.isoformat() if latest else None),
+            "event": " · ".join(text for _, text in event_samples.values()) or "No comprobado",
+            "queue": " · ".join(text for _, text in queue_samples.values()) or "No comprobado",
+            "tokens": " · ".join(tokens) or "Sin tokens ni enlaces comprobados",
+            "authentication": " · ".join(authentication) or "Sin observación de autenticación",
+            "navigation": (
+                _evidence_name("purpose", navigation.get("purpose"))
+                + " · "
+                + _evidence_name("result", navigation.get("result"))
+                if navigation is not None
+                else "Sin intento observado"
+            ),
+            "error": error or "Sin bloqueo informado",
+        },
+        inspection,
+    )
+
+
+def _live_card(engine: str, snapshot: Mapping[str, object]) -> str:
+    item = next(
+        (item for item in _entries(snapshot.get("engines")) if item.get("engine") == engine),
+        {},
+    )
+    values, inspection = _live_projection(item)
+    prefix = f"{engine}-live-"
+    label = f"Estado del bot · Motor {'A' if engine == 'queues_tokens' else 'B'}"
+    href = (
+        f' href="/control/sesiones/{inspection}" data-session-id="{inspection}"'
+        if inspection
+        else " hidden"
+    )
+    fields = {
+        "contexts": "Contextos",
+        "event": "Evento según sesión",
+        "queue": "Cola según sesión",
+        "tokens": "Tokens y enlaces",
+        **(
+            {
+                "navigation": "Último intento de navegación registrado",
+                "authentication": "Autenticación según sesión",
+            }
+            if engine == "browsers_members"
+            else {}
+        ),
+        "error": "Error o bloqueo",
+    }
+    return (
+        f'<section class="engine-live-card" id="{prefix}card" aria-label="{label}">'
+        f"<h2>{label}</h2>"
+        f'<p aria-live="polite"><strong id="{prefix}state">{escape(values["state"])}</strong>'
+        f' · <span id="{prefix}phase">{escape(values["phase"])}</span></p>'
+        "<dl>"
+        + "".join(
+            f'<dt>{term}</dt><dd><span id="{prefix}{name}">{escape(values[name])}</span>'
+            + (
+                f' <a id="{prefix}inspect"{href}>Abrir inspección privada</a>'
+                if name == "tokens"
+                else ""
+            )
+            + "</dd>"
+            for name, term in fields.items()
+        )
+        + "</dl>"
+        f'<p>Última observación de página: <span id="{prefix}page-time">{values["page-time"]}</span><br>'
+        f'Último cambio registrado del motor: <span id="{prefix}motor-time">{values["motor-time"]}</span><br>'
+        f'Consulta del motor: <span id="{prefix}motor-query">{_time(snapshot.get("observed_at"))}</span></p>'
+        f'<p id="{prefix}motor-status" role="status">'
+        + ("Consulta del motor disponible." if item else "Estado del motor sin verificar.")
+        + "</p>"
+        "<h3>Últimos registros del worker compartido</h3>"
+        "<p>Son registros globales, no navegaciones confirmadas de este motor.</p>"
+        f'<p id="{prefix}worker-status" role="status">Aún no hay actividad verificable.</p>'
+        f'<p id="{prefix}worker-advisory" hidden></p>'
+        f'<ol class="engine-live-records" aria-label="Registros del worker compartido">'
+        + "".join(f'<li id="{prefix}record-{index}" hidden></li>' for index in range(5))
+        + "</ol>"
+        f'<p>Consulta de actividad: <span id="{prefix}worker-time">Sin consultar</span></p>'
+        '<p><a href="/control/actividad">Abrir actividad detallada</a></p></section>'
+    )
+
+
 def _section(
     engine: str,
     item: Mapping[str, object],
@@ -943,6 +1360,7 @@ def page(
         f"<h1>{title}</h1>"
         "<p>SIMULATION_ONLY. Sin reservas ni compras reales. "
         "Dos motores lógicos, un worker físico; inicio y detención independientes.</p>"
+        + (_live_card(engine, snapshot) if engine is not None else "")
         + _poll_status(snapshot)
     )
     if not site_url_ready:
@@ -990,5 +1408,5 @@ def page(
     return _page(
         title,
         content,
-        script=f"<style>{_STYLE}</style><script>{_SCRIPT if engine else _CONTROL_SCRIPT}</script>",
+        script=f"<style>{_STYLE}</style><script>{_MOTOR_SCRIPT if engine else _CONTROL_SCRIPT}</script>",
     )

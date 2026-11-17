@@ -7,6 +7,9 @@ MOUNTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
     "verify-schema": (("boca_data", "/data", False),),
     "recipient": (("boca_telegram", "/run/telegram", False),),
     "prepare": (("boca_telegram", "/run/telegram", True),),
+    "inspect-direct": (("boca_data", "/data", False), ("boca_telegram", "/run/telegram", False)),
+    "install-direct": (("boca_data", "/data", False), ("boca_telegram", "/run/telegram", True)),
+    "verify-direct": (("boca_data", "/data", False), ("boca_telegram", "/run/telegram", False)),
     "archive-stage": (
         ("boca_data", "/data", True),
         ("boca_owner", "/run/owner", False),

@@ -179,7 +179,9 @@ def test_queue_page_links_to_existing_private_reveal_without_leaking_bearer():
         for tag, attrs in page.elements
         if tag == "a" and attrs.get("href") == f"/control/sesiones/{session_id}"
     ]
-    assert len(links) == 1 and links[0]["data-field"] == "inspect"
+    assert len(links) == 2
+    assert links[0]["id"] == "queues_tokens-live-inspect"
+    assert links[1]["data-field"] == "inspect"
     assert "Ver y copiar token/URL de la sesión 1" in body.decode()
     assert "La página informa que no hay eventos disponibles" in body.decode()
     assert b"queueittoken=" not in body

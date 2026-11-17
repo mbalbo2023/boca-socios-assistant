@@ -11,9 +11,37 @@ import base64
 import hashlib
 import re
 from dataclasses import asdict
+from html import escape
 
 from boca_socios import telegram_bootstrap
 from boca_socios.panel.enrollment_form import STYLE
+from boca_socios.panel.private_ui import _page
+
+
+def direct_page(csrf: str, operation_id: str, *, pending: bool = False) -> bytes:
+    if pending:
+        return _page(
+            "Configurar Telegram",
+            "<h1>Configurar Telegram</h1>"
+            '<p role="status" data-state="PENDING_INSTALLATION">'
+            "Pendiente de instalación. Guardar no activa el emisor.</p>",
+        )
+    return _page(
+        "Configurar Telegram",
+        "<h1>Configurar Telegram</h1>"
+        "<p>Guardá estos datos sólo en este panel. Guardar no activa el emisor.</p>"
+        '<form method="post" action="/telegram/configurar" autocomplete="off">'
+        f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
+        '<label for="tg-token">Token del bot</label>'
+        '<input id="tg-token" name="bot_token" type="password" maxlength="145" required '
+        'autocomplete="off" spellcheck="false">'
+        '<label for="tg-chat">Chat ID privado</label>'
+        '<input id="tg-chat" name="chat_id" type="text" inputmode="numeric" maxlength="16" '
+        'required autocomplete="off" spellcheck="false">'
+        '<button type="submit">Guardar configuración</button></form>',
+    )
+
 
 _SETUP_STYLE = (
     STYLE
