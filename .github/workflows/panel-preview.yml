@@ -105,3 +105,58 @@ jobs:
         run: |
           printf 'Vista previa **sintética** (no es el panel del droplet): [Descargar HTML](%s).\n' \
             "$PREVIEW_ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"
+
+  guest-navigation-playwright:
+    name: guest-navigation-playwright-offline
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'mbalbo2023/boca-socios-assistant' &&
+      github.actor == 'mbalbo2023' &&
+      github.ref == 'refs/heads/feat/417-guest-readonly-fast-ci'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact branch candidate without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Reject any drift in eight independently reviewed blobs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          paths=(
+            src/boca_socios/panel/private_http.py
+            src/boca_socios/panel/private_ui.py
+            src/boca_socios/panel/worker_activity.py
+            tests/test_guest_readonly_dashboard.py
+            tests/test_private_engine_controls.py
+            tests/test_site_url_configuration.py
+            scripts/qa_guest_navigation_playwright.py
+            tests/test_qa_guest_navigation_playwright.py
+          )
+          blobs=(
+            9e81b3d0ff611be2cb7499d8c39c6c3b328036c1
+            91b0fcd44c584ca8dc52a53f0bd2358f17878abd
+            fc631e0748b80842fca5ce09b1efef7a46adc316
+            38615a314c161b93575ba9839fbfb19aeeeaba4a
+            d8458fa4bf8c3ee0dee7d195bc00f5c7164e4236
+            5800fb619b97d03690a781d9a08a9f1742fe537d
+            9c1aaf49507742c9046e77cf62f86f78da557a48
+            19d83ac60b1b18b6a7c6bb93656864ab451ed125
+          )
+          for index in "${!paths[@]}"; do
+            actual="$(git rev-parse "HEAD:${paths[$index]}")"
+            test "$actual" = "${blobs[$index]}"
+          done
+          echo 'BOCA_GUEST_CANDIDATE_BLOBS state=PASS files=8 source=EXACT_GIT_TREE'
+      - name: Set up runner Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned uv for disposable runner
+        run: python -m pip install --disable-pip-version-check uv==0.13.4
+      - name: Install frozen Python browser package without downloading browsers
+        run: uv sync --frozen --group browser
+      - name: Check guest and synthetic-owner navigation in preinstalled Chrome
+        run: uv run --no-sync python scripts/qa_guest_navigation_playwright.py
