@@ -40,7 +40,7 @@ from boca_socios.events.official_catalog import (
 from boca_socios.events.official_presentation import export_observed_catalog_json
 from boca_socios.integration.command_store import CommandStore
 from boca_socios.notify.projection import list_local_notices, load_telegram_admin
-from boca_socios.owner_origin import owner_rp_host
+from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN, owner_rp_host
 from boca_socios.panel import private_token_view, private_ui, telegram_setup_ui
 from boca_socios.panel.enrollment_http import EnrollmentApplication
 from boca_socios.panel.lifecycle_intents import (
@@ -63,6 +63,12 @@ from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthenticati
 from boca_socios.panel.site_url_settings import (
     SiteUrlSettingsStore,
     SiteUrlSettingsUnavailable,
+)
+from boca_socios.panel.telegram_direct_staging import (
+    DirectStage,
+    DirectStageConflict,
+    DirectStageReceipt,
+    DirectStageRequest,
 )
 from boca_socios.panel.telegram_pairing_staging import (
     PairingStageConflict,
@@ -100,6 +106,7 @@ _UUID_PATH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 _INTAKE_PAUSED = "owner_simulation_intake_paused"
 _INTAKE_RESUMED = "owner_simulation_intake_resumed"
 _TOKEN_REVEAL_SCOPE = b"issue12-owner-token-reveal-v1"
+_DIRECT_SCOPE = b"telegram-direct-owner-stage-v1"
 _WAKE_LOST = (
     "Solicitud guardada. Abra Control y vuelva a pulsar el mismo botón para reenviar el aviso."
 )
@@ -231,6 +238,7 @@ class PrivatePanelApplication:
         observed_official_notices: Iterable[OfficialNotice] = (),
         official_notices_loader: Callable[[], Iterable[OfficialNotice]] | None = None,
         telegram_pairing_stager: Callable[[PairingStageRequest], PairingStageReceipt] | None = None,
+        telegram_direct_stage: DirectStage | None = None,
         telegram_recipient_loader: Callable[[], telegram_bootstrap.RecipientReceipt] | None = None,
         bot_control: Callable[[str], None] | None = None,
         queue_monitor: PrivateQueuePassMonitor | None = None,
@@ -281,6 +289,9 @@ class PrivatePanelApplication:
         if telegram_pairing_stager is not None and not callable(telegram_pairing_stager):
             raise ValueError("Telegram pairing stager must be an explicit local callback")
         self._telegram_pairing_stager = telegram_pairing_stager
+        if telegram_direct_stage is not None and origin != SSH_LOOPBACK_ORIGIN:
+            raise ValueError("direct staging requires private localhost")
+        self._telegram_direct_stage = telegram_direct_stage
         if telegram_recipient_loader is not None and not callable(telegram_recipient_loader):
             raise ValueError("Telegram recipient requires an explicit local reader")
         self._telegram_recipient_loader = telegram_recipient_loader
@@ -409,7 +420,35 @@ class PrivatePanelApplication:
                     return self._engine_page(start, session)
                 if self._bot_control is not None and "simulation:write" in session.permissions:
                     return self._bot_page(start, session, home=True)
-                return _response(start, 200, private_ui.home(session.csrf))
+                return _response(
+                    start,
+                    200,
+                    private_ui.home(
+                        session.csrf, direct_telegram=self._telegram_direct_stage is not None
+                    ),
+                )
+            if self._telegram_direct_stage is not None and path in (
+                "/telegram/configurar",
+                "/telegram/emparejar",
+            ):
+                if "simulation:write" not in session.permissions:
+                    return _error(start, 403, "Permiso insuficiente.")
+                try:
+                    pending = self._telegram_direct_stage.pending()
+                except DirectStageConflict:
+                    return _error(start, 409, "Ya hay configuración pendiente.")
+                except (OSError, ValueError):
+                    return _error(start, 503, "Almacenamiento privado de Telegram no verificable.")
+                op = (
+                    ""
+                    if pending
+                    else self._sessions.new_operation(session, form_scope=_DIRECT_SCOPE)
+                )
+                if op is None:
+                    return _error(start, 429, "Espere antes de abrir otra configuración.")
+                return _response(
+                    start, 200, telegram_setup_ui.direct_page(session.csrf, op, pending=pending)
+                )
             if path == "/telegram/configurar":
                 if self._telegram_pairing_stager is not None:
                     return self._redirect(start, "/telegram/emparejar")
@@ -421,6 +460,23 @@ class PrivatePanelApplication:
                     referrer_policy="no-referrer",
                 )
             if path == "/telegram":
+                direct_notice = None
+                if self._telegram_direct_stage is not None:
+                    if "simulation:write" not in session.permissions:
+                        direct_notice = "Configuración privada del titular."
+                    else:
+                        try:
+                            direct_notice = (
+                                "Pendiente de instalación."
+                                if self._telegram_direct_stage.pending()
+                                else "Sin guardar en este panel."
+                            )
+                        except DirectStageConflict:
+                            direct_notice = "Ya hay una configuración pendiente."
+                        except (ValueError, OSError):
+                            direct_notice = (
+                                "Almacenamiento privado no verificable. No vuelvas a guardar."
+                            )
                 return _response(
                     start,
                     200,
@@ -430,7 +486,9 @@ class PrivatePanelApplication:
                             staging_available=self._telegram_pairing_stager is not None,
                             expected_source_sha=self._source_sha,
                             now=self._now(),
-                        )
+                        ),
+                        direct_notice=direct_notice,
+                        can_configure="simulation:write" in session.permissions,
                     ),
                 )
             if path == "/configuracion":
@@ -619,7 +677,9 @@ class PrivatePanelApplication:
                     "__Host-boca_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0",
                 ),
             )
-        if self._telegram_pairing_stager is not None:
+        if self._telegram_direct_stage is not None and path == "/telegram/configurar":
+            return self._stage_telegram_direct(environ, session, start, self._telegram_direct_stage)
+        if self._telegram_direct_stage is None and self._telegram_pairing_stager is not None:
             if path == "/telegram/emparejar/desafio":
                 return self._challenge_private_telegram_pairing(environ, session, start)
             if path == "/telegram/emparejar":
@@ -1163,6 +1223,53 @@ class PrivatePanelApplication:
         self._sessions.finish(operation, 303)
         return self._redirect(start, "/configuracion")
 
+    def _stage_telegram_direct(
+        self,
+        environ: Mapping[str, object],
+        session: OwnerSession,
+        start: StartResponse,
+        stage: DirectStage,
+    ) -> list[bytes]:
+        if "simulation:write" not in session.permissions:
+            return _error(start, 403, "Permiso insuficiente.")
+        fields = self._form(environ, expected={"csrf", "operation_id", "bot_token", "chat_id"})
+        if (
+            fields is None
+            or _canonical_uuid(fields["operation_id"]) is None
+            or len(fields["bot_token"]) > 145
+            or len(fields["chat_id"]) > 16
+        ):
+            return _error(start, 400, "Configuración de Telegram inválida.")
+        if stage.identity is None or stage.source != self._source_sha:
+            return _error(start, 503, "Almacenamiento privado de Telegram no verificable.")
+        request = DirectStageRequest(fields["bot_token"], fields["chat_id"], self._source_sha)
+        try:
+            request.validate()
+        except ValueError:
+            return _error(start, 400, "Token del bot o Chat ID privado inválido.")
+        result, operation = self._sessions.reserve(
+            session, fields["operation_id"], fields["csrf"], _DIRECT_SCOPE
+        )
+        if result:
+            return _error(
+                start,
+                409 if operation is not None else result,
+                "Solicitud ya procesada o no autorizada.",
+            )
+        assert operation is not None
+        try:
+            receipt = stage.save(request)
+            if type(receipt) is not DirectStageReceipt or receipt.state != "PENDING_INSTALLATION":
+                raise ValueError("direct_stage_unavailable")
+        except DirectStageConflict:
+            self._sessions.finish(operation, 409)
+            return _error(start, 409, "Ya hay configuración pendiente.")
+        except Exception:
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "No se confirmó el guardado. Consultá el estado.")
+        self._sessions.finish(operation, 202)
+        return _response(start, 202, telegram_setup_ui.direct_page("", "", pending=True))
+
     def _challenge_private_telegram_pairing(
         self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
     ) -> list[bytes]:
@@ -1579,6 +1686,7 @@ class PrivatePanelApplication:
                 if home:
                     body = private_ui.home(
                         session.csrf,
+                        direct_telegram=self._telegram_direct_stage is not None,
                         bot=(lifecycle, start_id, stop_id),
                         site_url_ready=site_url_ready,
                         auth_members=auth_members,
@@ -1597,7 +1705,15 @@ class PrivatePanelApplication:
                 return _response(start, 200, body)
             status, reason = 429, "Demasiados formularios abiertos. Vuelva a ingresar."
         if home:
-            return _response(start, 200, private_ui.home(session.csrf, bot_unavailable=True))
+            return _response(
+                start,
+                200,
+                private_ui.home(
+                    session.csrf,
+                    bot_unavailable=True,
+                    direct_telegram=self._telegram_direct_stage is not None,
+                ),
+            )
         return _error(start, status, reason)
 
     def _site_url_ready(self) -> bool:

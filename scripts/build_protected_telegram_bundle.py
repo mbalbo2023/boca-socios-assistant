@@ -95,6 +95,7 @@ INSTALLATION_PROJECTION_NAME = "boca_socios/host_on_demand_lifecycle.py"
 OWNER_PROJECTION_NAME = "boca_socios/host_telegram_owner_stage.py"
 SERVICE_PROJECTION_NAME = "boca_socios/host_on_demand_service.py"
 STAGE_PROJECTION_NAME = "boca_socios/telegram_same_lease_stage.py"
+OWNER_IDENTITY_PROJECTION = "boca_socios/panel/owner_sessions.py"
 
 INSTALLED_SOURCES = tuple(
     source
@@ -371,6 +372,12 @@ def build(root: Path, target: Path, *, installed: bool = False) -> str:
             if installed and bundle_name == SERVICE_PROJECTION_NAME
             else _canonical_projection(root, STAGE_PROJECTION_NAME, INSTALLED_STAGE_ROOTS)
             if installed and bundle_name == STAGE_PROJECTION_NAME
+            # Only passkey's OwnerIdentity type is imported by this host closure;
+            # never ship the private HTTP session manager as a host operation.
+            else _canonical_projection(
+                root, OWNER_IDENTITY_PROJECTION, frozenset({"OwnerIdentity"})
+            )
+            if installed and bundle_name == OWNER_IDENTITY_PROJECTION
             else content
         )
     if NETWORK_PROJECTION_NAME in files:

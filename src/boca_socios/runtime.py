@@ -48,6 +48,8 @@ from boca_socios.panel.member_sector_store import MemberSectorStore
 from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
+from boca_socios.panel.telegram_direct_staging import FILENAME as DIRECT_FILENAME
+from boca_socios.panel.telegram_direct_staging import DirectStage
 from boca_socios.panel.telegram_pairing_staging import (
     STAGING_FILENAME,
     PairingStageReceipt,
@@ -136,6 +138,23 @@ def _engine_stopped_after_reboot(database_path: Path, *, browser_backend: str) -
     return not (state.component == "bot" and state.target == "start" and state.status == "APPLIED")
 
 
+def _configured_telegram_direct_stage(
+    settings: Settings, *, boca_volume_root: Path = Path("/data")
+) -> DirectStage | None:
+    settings.validate_beta()
+    if (
+        settings.panel_origin != SSH_LOOPBACK_ORIGIN
+        or settings.browser_backend != "ipc"
+        or settings.environment != "staging"
+        or settings.runtime_mode != "simulation"
+    ):
+        return None
+    path = boca_volume_root / DIRECT_FILENAME
+    if settings.db_path != boca_volume_root / "boca.sqlite3":
+        return DirectStage(path, settings.source_sha, None)
+    return DirectStage.bind(path, settings.source_sha)
+
+
 def _configured_telegram_pairing_stager(
     settings: Settings, *, boca_volume_root: Path = Path("/data")
 ) -> Callable[[PairingStageRequest], PairingStageReceipt] | None:
@@ -174,6 +193,24 @@ def _configured_telegram_pairing_stager(
         if directory_fd is not None:
             os.close(directory_fd)
     return partial(stage_private_telegram_pairing, boca_volume_root / STAGING_FILENAME)
+
+
+def _telegram_staging_for_beta(
+    settings: Settings,
+    *,
+    boca_volume_root: Path | None = None,
+) -> tuple[DirectStage | None, Callable[[PairingStageRequest], PairingStageReceipt] | None]:
+    overrides = {} if boca_volume_root is None else {"boca_volume_root": boca_volume_root}
+    direct = _configured_telegram_direct_stage(settings, **overrides)
+    try:
+        legacy = _configured_telegram_pairing_stager(settings, **overrides)
+    except ValueError:
+        if direct is None:
+            raise
+        # The direct route already has its own pinned DATA guard. In particular,
+        # an unavailable legacy volume must not disable unrelated panel pages.
+        legacy = None
+    return direct, legacy
 
 
 class _TLSWSGIServer(WSGIServer):
@@ -376,7 +413,7 @@ def build_beta_server(
         )
         bot_control = None
         bot_session = None
-    telegram_pairing_stager = _configured_telegram_pairing_stager(settings)
+    telegram_direct_stage, telegram_pairing_stager = _telegram_staging_for_beta(settings)
     from boca_socios.panel.telegram_recipient import read_prepared_recipient
 
     telegram_recipient_loader = (
@@ -484,6 +521,7 @@ def build_beta_server(
                 settings.db_path.with_name(OFFICIAL_SNAPSHOT_NAME)
             ),
             telegram_pairing_stager=telegram_pairing_stager,
+            telegram_direct_stage=telegram_direct_stage,
             telegram_recipient_loader=telegram_recipient_loader,
             bot_control=bot_control,
             automatic_monitor=automatic_monitor,

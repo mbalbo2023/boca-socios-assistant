@@ -442,6 +442,7 @@ def home(
     *,
     bot: tuple[LifecycleIntent | None, str, str] | None = None,
     bot_unavailable: bool = False,
+    direct_telegram: bool = False,
     site_url_ready: bool | None = None,
     auth_members: tuple[MemberView, ...] = (),
     selected_auth_member: str | None = None,
@@ -472,7 +473,8 @@ def home(
         '<p><a href="/avisos">Consultar avisos locales y estado Telegram</a></p>'
         '<p><a href="/avisos-oficiales">Consultar avisos públicos oficiales observados</a></p>'
         '<p><a href="/telegram">Administrar Telegram y consultar su estado</a></p>'
-        '<p><a href="/telegram/configurar">Configurar Telegram con un recibo aprobado</a></p>'
+        '<p><a href="/telegram/configurar">'
+        f"{'Configurar Telegram' if direct_telegram else 'Configurar Telegram con un recibo aprobado'}</a></p>"
         '<section aria-labelledby="pending"><h2 id="pending">Funciones no habilitadas</h2><ul>'
         "<li>Los avisos oficiales son informativos y requieren observaciones cargadas; "
         "no hay fuente en vivo ni comprobación de disponibilidad.</li>"
@@ -1057,7 +1059,9 @@ def notices(items: tuple[LocalNoticeView, ...]) -> bytes:
     )
 
 
-def telegram_admin(snapshot: TelegramAdminSnapshot) -> bytes:
+def telegram_admin(
+    snapshot: TelegramAdminSnapshot, *, direct_notice: str | None = None, can_configure: bool = True
+) -> bytes:
     """Voice-friendly status with host evidence and local history kept separate."""
     observation = snapshot.host_observation
     if observation is None:
@@ -1114,6 +1118,17 @@ def telegram_admin(snapshot: TelegramAdminSnapshot) -> bytes:
         else "La preparación cifrada con guardado en este panel no está habilitada. "
         "Puede consultar las instrucciones de configuración."
     )
+    if direct_notice is not None:
+        preparation = direct_notice + " Guardar el token y el Chat ID no activa el emisor."
+    if direct_notice is None:
+        config_links = (
+            '<p><a href="/telegram/configurar">Configurar bot de Telegram</a></p>'
+            '<p><a href="/telegram/emparejar">Emparejar chat privado</a></p>'
+        )
+    elif can_configure:
+        config_links = '<p><a href="/telegram/configurar">Configurar Telegram</a></p>'
+    else:
+        config_links = ""
     latest = next((item for item in snapshot.notices if item.telegram_state is not None), None)
     if not snapshot.history_available:
         history = "Historial local no disponible. No se confirma ningún intento de envío."
@@ -1146,8 +1161,9 @@ def telegram_admin(snapshot: TelegramAdminSnapshot) -> bytes:
         '<section aria-labelledby="telegram-preparation">'
         '<h2 id="telegram-preparation">Preparar Telegram</h2><p>'
         + escape(preparation)
-        + '</p><p><a href="/telegram/configurar">Configurar bot de Telegram</a></p>'
-        '<p><a href="/telegram/emparejar">Emparejar chat privado</a></p></section>'
+        + "</p>"
+        + config_links
+        + "</section>"
         '<section aria-labelledby="telegram-delivery">'
         '<h2 id="telegram-delivery">Último intento de envío</h2><p>'
         + escape(history)

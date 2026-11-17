@@ -151,6 +151,8 @@ def _execute(
     restoration = "NOT_NEEDED"
     state = "PREFLIGHT_FAILED"
     sender_state = "OFF"
+    if operation == "install-direct":
+        return _direct_install(context, storage)
     try:
         # A read-only mapped-UID probe establishes capability before stopping.
         schema = storage.call("verify-schema", {})
@@ -356,6 +358,82 @@ def _execute(
     return receipt
 
 
+def _direct_install(
+    context: InstalledTelegramContext, storage: InstalledMaintenance
+) -> TelegramBackendReceipt:
+    item = context.installation
+    stopped, state, restoration = False, "PREFLIGHT_FAILED", "NOT_NEEDED"
+    try:
+        context.healthy()
+        # A legacy sender still registered in a binding is not eligible, even stopped.
+        if (
+            item.pair.sender_running
+            or item.pair.sender_id
+            or ("boca-socios_boca_telegram" not in dict(context.volumes))
+        ):
+            raise ValueError("direct_preflight_unverified")
+        owner = storage.call("owner-identity", {})
+        if set(owner) != {"owner_digest"} or not re.fullmatch(
+            "[a-f0-9]{64}", owner["owner_digest"]
+        ):
+            raise ValueError("direct_owner_unverified")
+        request = {
+            "source_sha": item.source_sha,
+            "lease_binding": hashlib.sha256(
+                bootstrap._canonical(
+                    {
+                        "attempt": context.attempt_id,
+                        "workflow": context.workflow_sha,
+                        "binding": context.binding_digest,
+                        "controller": item.controller_id,
+                        "worker": item.worker_id,
+                        "owner": owner["owner_digest"],
+                    }
+                )
+            ).hexdigest(),
+        }
+        proof = storage.call("inspect-direct", request)
+        if set(proof) != {"witness"} or not re.fullmatch("[a-f0-9]{64}", proof["witness"]):
+            raise ValueError("direct_stage_unverified")
+        request.update(proof)
+        stopped, state = True, "FAILED_STATE_PRESERVED"
+        context.stop()
+        context.stopped()
+        if storage.call("owner-identity", {}) != owner:
+            raise ValueError("direct_owner_changed")
+        if storage.call("install-direct", request) != {"state": "WRITTEN_SENDER_OFF"}:
+            raise ValueError("direct_install_unverified")
+        context.stopped()
+        if storage.call("verify-direct", request) != {
+            "state": "INSTALLED_SENDER_OFF_STAGE_CLEANUP_PENDING"
+        }:
+            raise ValueError("direct_commit_unverified")
+        context.stopped()
+        state = "INSTALLED_SENDER_OFF_STAGE_CLEANUP_PENDING"
+    except Exception:
+        state = "FAILED_STATE_PRESERVED" if stopped else "PREFLIGHT_FAILED"
+    finally:
+        if stopped and not storage.direct_writer_retired:
+            state, restoration = "CLEANUP_INDETERMINATE", "INDETERMINATE"
+        elif stopped:
+            try:
+                context.restore()
+                restoration = "CONTROLLER_HEALTHY_ENGINE_OFF"
+            except Exception:
+                state, restoration = "FAILED_STATE_PRESERVED", "INDETERMINATE"
+    receipt = TelegramBackendReceipt(
+        "install-direct",
+        context.attempt_id,
+        item.source_sha,
+        state,
+        restoration,
+        "UNVERIFIED" if state == "PREFLIGHT_FAILED" else "OFF",
+    )
+    if state != "INSTALLED_SENDER_OFF_STAGE_CLEANUP_PENDING":
+        raise TelegramBackendError(receipt)
+    return receipt
+
+
 def prepare_installed_telegram(
     attempt_id: str,
     *,
@@ -424,7 +502,16 @@ def verify_backend_receipt(
             type(raw) is not bytes
             or not 0 < len(raw) <= 1024
             or operation
-            not in {"prepare", "activate", "recover", "renew", "complete", "migrate", "observe"}
+            not in {
+                "prepare",
+                "activate",
+                "recover",
+                "renew",
+                "complete",
+                "migrate",
+                "observe",
+                "install-direct",
+            }
         ):
             raise ValueError("frame")
         raw = raw.removesuffix(b"\n")
@@ -458,6 +545,7 @@ def verify_backend_receipt(
             value["state"]
             == {
                 "prepare": "PREPARED",
+                "install-direct": "INSTALLED_SENDER_OFF_STAGE_CLEANUP_PENDING",
                 "activate": "READY",
                 "recover": "RECOVERED",
                 "renew": "STAGE_ARCHIVED",
@@ -470,6 +558,7 @@ def verify_backend_receipt(
             and value["sender_state"]
             in {
                 "prepare": {"OFF"},
+                "install-direct": {"OFF"},
                 "activate": {"VERIFIED"},
                 "recover": {"OFF", "VERIFIED"},
                 "renew": {"OFF"},
@@ -493,7 +582,7 @@ def verify_backend_receipt(
             and value["sender_state"]
             in (
                 {"OFF", "UNVERIFIED"}
-                if operation in {"prepare", "renew", "migrate", "observe"}
+                if operation in {"prepare", "renew", "migrate", "observe", "install-direct"}
                 else {"OFF", "VERIFIED", "UNVERIFIED"}
             )
         )

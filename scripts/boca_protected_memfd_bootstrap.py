@@ -600,6 +600,7 @@ def main() -> int:
         telegram_initializer_recover = sys.argv[2] == "boca-telegram-initializer-recover"
         telegram_installed = sys.argv[2] in {
             "telegram-prepare-diagnose",
+            "telegram-install-direct",
             "telegram-public-boundary-observe",
             "telegram-schema-observe",
             "telegram-migrate",

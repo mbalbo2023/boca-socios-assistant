@@ -46,6 +46,10 @@ def execute(operation: str, request: dict[str, Any]) -> dict[str, Any]:
     bootstrap._identity(bootstrap.UID)
     if operation not in MOUNTS or type(request) is not dict:
         raise ValueError("maintenance_operation_unverified")
+    if operation in {"inspect-direct", "install-direct", "verify-direct"}:
+        from boca_socios.telegram_direct_custody import execute_direct
+
+        return execute_direct(operation, DATA, CUSTODY, request)
     coords = CutoverCoordinates(**request["coordinates"]) if "coordinates" in request else None
     if coords is not None and not _coordinates_valid(coords):
         raise ValueError("maintenance_coordinates_unverified")
