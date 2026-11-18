@@ -165,6 +165,17 @@ TELEGRAM_INCIDENT_ENTRIES = BINDING_ENTRIES | {
 }
 TELEGRAM_INCIDENT_MAX_ZIP = 320_000
 TELEGRAM_INCIDENT_MAX_UNCOMPRESSED = 900_000
+# G17 #1241: four-entry stdlib-only forensic ZIP, no APPLY actor/CLI.
+PAIR_INCIDENT_1241_ENTRIES = frozenset(
+    {
+        "__main__.py",
+        "boca_socios/__init__.py",
+        "boca_socios/host_cutover_stage.py",
+        "boca_socios/host_boca_pair_upgrade_incident_readonly.py",
+    }
+)
+PAIR_INCIDENT_1241_MAX_ZIP = 32_000
+PAIR_INCIDENT_1241_MAX_UNCOMPRESSED = 80_000
 TELEGRAM_INITIALIZER_ENTRIES = TELEGRAM_INCIDENT_ENTRIES | {
     "boca_socios/host_telegram_initializer_recovery.py",
 }
@@ -396,6 +407,7 @@ def verify(
     telegram_installed: bool = False,
     telegram_incident_observe: bool = False,
     telegram_initializer_recover: bool = False,
+    pair_upgrade_incident_observe_1241: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
     if (
@@ -421,13 +433,16 @@ def verify(
                 telegram_installed,
                 telegram_incident_observe,
                 telegram_initializer_recover,
+                pair_upgrade_incident_observe_1241,
             )
         )
         > 1
     ):
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
-        TELEGRAM_INITIALIZER_MAX_ZIP
+        PAIR_INCIDENT_1241_MAX_ZIP
+        if pair_upgrade_incident_observe_1241
+        else TELEGRAM_INITIALIZER_MAX_ZIP
         if telegram_initializer_recover
         else TELEGRAM_INCIDENT_MAX_ZIP
         if telegram_incident_observe
@@ -466,7 +481,9 @@ def verify(
         else MAX_ZIP
     )
     max_uncompressed = (
-        TELEGRAM_INITIALIZER_MAX_UNCOMPRESSED
+        PAIR_INCIDENT_1241_MAX_UNCOMPRESSED
+        if pair_upgrade_incident_observe_1241
+        else TELEGRAM_INITIALIZER_MAX_UNCOMPRESSED
         if telegram_initializer_recover
         else TELEGRAM_INCIDENT_MAX_UNCOMPRESSED
         if telegram_incident_observe
@@ -512,7 +529,9 @@ def verify(
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         allowlisted = (
-            (TELEGRAM_INITIALIZER_ENTRIES,)
+            (PAIR_INCIDENT_1241_ENTRIES,)
+            if pair_upgrade_incident_observe_1241
+            else (TELEGRAM_INITIALIZER_ENTRIES,)
             if telegram_initializer_recover
             else (TELEGRAM_INCIDENT_ENTRIES,)
             if telegram_incident_observe
@@ -597,6 +616,9 @@ def main() -> int:
             "cutover-worker-834-recover",
         }
         telegram_incident_observe = sys.argv[2] == "boca-telegram-incident-observe"
+        pair_upgrade_incident_observe_1241 = (
+            sys.argv[2] == "boca-pair-upgrade-incident-observe-1241"
+        )
         telegram_initializer_recover = sys.argv[2] == "boca-telegram-initializer-recover"
         telegram_installed = sys.argv[2] in {
             "telegram-prepare-diagnose",
@@ -642,6 +664,10 @@ def main() -> int:
             or re.fullmatch(r"[a-f0-9]{40}", sys.argv[4]) is None
         ):
             raise ValueError("incident observer requires exact observation run and workflow SHA")
+        if pair_upgrade_incident_observe_1241 and (
+            len(sys.argv) != 4 or re.fullmatch(r"[1-9][0-9]{0,19}", sys.argv[3]) is None
+        ):
+            raise ValueError("G17 incident reader accepts one observation run ID only")
         if telegram_initializer_recover and (
             len(sys.argv) != 5
             or re.fullmatch(r"[1-9][0-9]{0,19}", sys.argv[3]) is None
@@ -698,7 +724,9 @@ def main() -> int:
         if precommit_restore and len(sys.argv) != 4:
             raise ValueError("precommit recovery requires only fresh authenticated run ID")
         bound = (
-            TELEGRAM_INITIALIZER_MAX_ZIP
+            PAIR_INCIDENT_1241_MAX_ZIP
+            if pair_upgrade_incident_observe_1241
+            else TELEGRAM_INITIALIZER_MAX_ZIP
             if telegram_initializer_recover
             else TELEGRAM_INCIDENT_MAX_ZIP
             if telegram_incident_observe
@@ -760,6 +788,7 @@ def main() -> int:
             telegram_installed=telegram_installed,
             telegram_incident_observe=telegram_incident_observe,
             telegram_initializer_recover=telegram_initializer_recover,
+            pair_upgrade_incident_observe_1241=pair_upgrade_incident_observe_1241,
         )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.
