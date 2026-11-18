@@ -1,46 +1,46 @@
 # Binding instructions for every coding agent
 
-## Checkpoint VIGENTE G18 — 2026-11-18 ART (INCIDENTE #1251 / BETA NO_GO)
+## CHECKPOINT VIGENTE G18 — 2026-11-18 ART / HANDOFF PARA DEPLOY BETA
 
-**Producto instalado y preservado: G17**, fuente
-`7f20bf0acf43b2e17812bfc35efc86a552b5a404`. Luego del intento G18,
-las Actions Boca READ_ONLY [#1252](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44353903240)
+**Leer primero [handoff G18 completo](docs/HANDOFF_G18_2026-11-18.md) y
+[issue canónico #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).**
+El producto físicamente instalado y conservado sigue siendo **G17**
+(`7f20bf0acf43b2e17812bfc35efc86a552b5a404`); Actions Boca READ_ONLY
+[#1252](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44353903240)
 y [#1253](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44354524641)
-confirmaron el mismo controller HEALTHY en `127.0.0.1:8443` y worker
-CREATED/PID0, con identidad de binding, inodes y recursos retenidos estables.
-Son fotografías físicas, no acreditan actividad viva del motor, URL visitada,
-evento, cola, token, login DOM ni reserva.
+confirmaron controller HEALTHY en `127.0.0.1:8443`, worker CREATED/PID0 y
+binding/recursos/inodes intactos. No prueban navegación, login ni tokens.
 
-**G18 está integrado y publicado, NO instalado:** PR [#552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
-MERGED en `main@dbd3f1c494c341c980625da3660e10cc28fa8446`;
-CI #1327 y Playwright sintético offline #1326 PASS; release dual
-[#876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224)
-SUCCESS. UX G18 pone motores A/B primero en Actividad, reutilizando
-`GET /control/motores.json`, polling existente y la inspección privada;
-no agrega worker, motor, canal de tokens o reservas. El único protected
-APPLY G18 [#1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452)
-**FAILED**, `failed_phase=ATTEST`, `commit_started=false`,
-`cleanup=INDETERMINATE`, sin IDs sucesores. **No repetir #1251, release ni
-build; tampoco asumir causa física exclusiva.**
+**G18 está MERGED y publicado, NO desplegado:** [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
+y [release #876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224)
+SUCCESS; único [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452)
+FAILED `ATTEST`, sin commit ni contenedores nuevos. **No reintentar.**
+El diagnóstico dejó de ser CODE_ONLY: [PR forense #553](https://github.com/mbalbo2023/boca-socios-assistant/pull/553)
+MERGED en `8c3edd972c4be77ebae5be40a54ccff6c3202b30` después de
+4GO_FINAL; CI main [44365020955](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365020955)
+3/3 PASS y Security [44365020817](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365020817)
+3/3 PASS. **Una sola** observación forense READ_ONLY [#1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614)
+SUCCESS halló marcadores genuinos `evidence,intent,terminal`, sin `commit` ni
+`technical-postflight-v2`: `NO_GO/ATTEST`, causa exclusiva `UNPROVEN`.
+Arquitectura, QA, Operaciones y Root coincidieron en dos rutas indiscernibles:
+constructor/factory o `backend.attest`. No inventar cuál; no repetir #1255.
+[RCA](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6987374351).
 
-**Trabajo actual limitado CODE_ONLY:** rama
-`feature/417-g18-1251-incident-readonly` reutiliza el observador forense
-#1241 para los cinco marcadores durables fijos de #1251, el ZIP privado y
-la Action protegida. Autor separado acreditó 10.461 pytest PASS, 1 SKIP
-AF_UNIX por entorno, mypy/Ruff/política PASS. La revisión 4GO_FINAL,
-PR/CI y autorización independiente de UNA observación READ_ONLY aún
-se deben acreditar; **ningún despacho nuevo al droplet está autorizado por
-el código solo**. `NO_MARKERS` significa `UNKNOWN`, no diagnóstico exclusivo.
-Consolidar toda decisión y recibo en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+**Código existente: REUTILIZAR.** Navegación URL/HTTP/intentos, evento/cola,
+Queue-it/Boca tokens y copia, polling 5 s, Telegram token/Chat ID directo y
+dos motores lógicos ya tienen rutas. [Inventario UX](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6987469566).
+No confundir `has_auth` con login DOM, worker CREATED con motor activo, ni
+configuración de Telegram con sender habilitado. `Ingresar` aún pide passkey
+sin sesión; Motor B bajo pliegue y copia profunda requieren QA/corrección
+focal. **BETA NO_GO**, `SIMULATION_ONLY`, **sin reservas reales**.
 
-**Pendientes funcionales:** visibilidad compacta y veraz en tiempo real de
-ambos motores, URL/HTTP/intentos/evento/cola/token y copia privada de enlace;
-login y navegación por socio acreditados, Telegram directo, eliminar el
-ingreso redundante con passkey, QA real Samsung y certificación BETA.
-`SIMULATION_ONLY`; **ninguna reserva real**. Toda operación de host
-exclusivamente mediante GitHub Actions Boca, nunca navegador interno contra
-el servicio privado; Porota, otros puertos, contenedores y proyectos intocables.
-Los checkpoints inferiores son **históricos**, no instrucciones vigentes.
+**Ownership y próxima acción:** Root integra/checkpoint; Arquitectura, QA y
+Operaciones dictaminan independientemente antes de código, con autor distinto.
+Reconciliar el HEAD y PR abiertos antes de trabajar; no repetir PR, builds,
+release, APPLY ni observaciones. Toda operación física/Playwright del droplet
+**sólo GitHub Actions Boca**; nunca navegar el servicio privado desde browser
+interno ni tocar Porota, otros puertos, servicios o Docker. No solicitar de
+nuevo autorizaciones ya concedidas. Las secciones inferiores son HISTÓRICAS.
 
 ## Histórico: checkpoint G17 — 2026-11-18 ART (corte previo / CODE_ONLY)
 

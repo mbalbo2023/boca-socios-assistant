@@ -1,6 +1,11 @@
 # Estado de integración BETA
 
-## Último checkpoint: G18 instalado NO; incidente #1251 — 18-Nov-2026 ART
+## Último checkpoint: G18 NO instalado; lectura #1255 cerrada — 18-Nov-2026 ART
+
+**Handoff operativo vigente:** [G18 18-Nov](HANDOFF_G18_2026-11-18.md)
+y [ledger #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+El checkpoint vigente **no** es la rama diagnóstica anterior: PR #553 y
+observación #1255 fueron completados. Las secciones inferiores son históricas.
 
 | Etapa | Evidencia verificada | Situación |
 | --- | --- | --- |
@@ -8,25 +13,35 @@
 | G18 integrado | [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552) MERGED, `main@dbd3f1c494c341c980625da3660e10cc28fa8446`; CI #1327, Playwright sintético #1326, Security #1109 PASS | Mejora de jerarquía `/control/actividad` en código; no prueba funcionamiento real. |
 | Release G18 | [#876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224) SUCCESS, par controller/browser publicado | Imagen publicada, **no** equivale a instalado. No repetir build/release. |
 | Único intento de instalar G18 | [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452) FAILED | `failed_phase=ATTEST`, `commit_started=false`, `cleanup=INDETERMINATE`, sin IDs sucesores. **No repetir APPLY**; causa exclusiva aún UNKNOWN. |
-| Diagnóstico actual | Rama `feature/417-g18-1251-incident-readonly`, commit de autor separado `0ed2802` más reconciliación documental Root; 10.461 pytest PASS, 1 SKIP local AF_UNIX; mypy/Ruff/política PASS | **CODE_ONLY**. Observa cinco marcadores exactos #1251 con lector seguro ya existente; PR, CI, cuatro GO finales sobre SHA definitivo y **UNA** Action READ_ONLY requieren decisión independiente. Ninguna nueva operación física. |
+| Diagnóstico #1251 cerrado hasta donde permite el recibo | [PR #553](https://github.com/mbalbo2023/boca-socios-assistant/pull/553) MERGED `main@8c3edd972c4be77ebae5be40a54ccff6c3202b30` (HEAD antes de esta documentación), [CI main](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365020955) 3/3 PASS, [Security](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365020817) 3/3 PASS, [único READ_ONLY #1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614) SUCCESS | Marcadores auténticos `evidence,intent,terminal`, sin `commit` ni `technical-postflight-v2`; `NO_GO/ATTEST`, `observer_writes=0`, **causa exclusiva UNPROVEN**. Ya NO está CODE_ONLY ni pendiente de ejecutar; **no repetir**. |
 
 **Conclusión:** BETA **NO_GO**. El sistema que sigue físicamente en el
 droplet es G17; la mejora de UX G18 permanece sólo en `main`/GHCR. El fallo
-#1251 puede corresponder a más de una ruta `ATTEST`. La ausencia eventual
-de marcadores tampoco demostraría una causa exclusiva ni habilitaría retry.
+#1251 corresponde a una de dos rutas posibles — fallo de constructor/factory
+o de `backend.attest` antes de STAGE — **sin prueba discriminatoria**. Los
+marcadores sí existen; no inferir del resultado cuál guard rechazó.
 El [ledger/RCA/ownership canónico #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
 concentra evidencia y gates; no crear otra rama de motor, reescribir tests
-cubiertos ni inventar otros bloqueantes.
+cubiertos ni inventar otros bloqueantes. El siguiente gate es comparar de
+manera offline los predicados concretos contra recibos P/C y release;
+cualquier observación adicional exige aprobación independiente 4GO y sólo
+GitHub Actions Boca. Nunca repetir #1251 ni #1255.
 
-**Funcionalidad por certificar:** pantalla compacta que refleje intentos,
-URL solicitada/final, respuesta HTTP observada, estado del servicio,
-eventos/colas, tokens y enlace privado copiable; navegación/login por socio
-con resultado verificable; configuración directa Telegram; retirar o redirigir
-«Ingresar» con passkey redundante; prueba UX Samsung con control por voz.
-Hay dos motores lógicos sobre un worker físico; polling y registros globales
-no prueban trabajo de ese motor. `SIMULATION_ONLY`, sin compras ni reservas
-reales. Toda operación host sólo por GitHub Actions Boca; no tocar Porota,
-otros servicios, contenedores o puertos.
+**Funcionalidad por certificar — reutilizar fuentes existentes:**
+`automatic_observer`, `engine_sessions`, `queue_page_observation`,
+`engine_view`, `private_token_view`, `telegram_setup_ui`. Ya hay navegación
+URL/HTTP e intentos **hasta tres por sesión**, estado de evento/cola,
+tokens/enlace de inspección privada copiables, polling cada cinco segundos
+y formulario de Telegram token/Chat ID **condicional**. Falta comprobar
+worker físico, la URL efectivamente visitada, copia desde Samsung y estado
+real de Telegram; mejorar Motor B bajo el pliegue y jerarquía visual.
+`has_auth` no demuestra login DOM; reserva sólo simulada. `/ingresar` ya
+redirige con sesión activa, pero pide passkey si no hay sesión; eliminarlo
+modifica autenticación, no sólo un link. Dos motores lógicos comparten un
+worker; no confundir telemetría global vieja con ejecución. `SIMULATION_ONLY`,
+sin compras ni reservas reales. Todas las operaciones host y Playwright
+físico sólo por GitHub Actions Boca; Porota, otros contenedores/puertos
+intocables. Criterios y orden en el [handoff](HANDOFF_G18_2026-11-18.md).
 
 ## Histórico: G17 Motor A / UX evidenciable (corte anterior, 18-Nov-2026 ART)
 
