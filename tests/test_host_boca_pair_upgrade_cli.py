@@ -86,6 +86,77 @@ def test_upgrade_terminal_receipt_canonical_and_runner_verified() -> None:
     assert b"BOCA_PAIR_UPGRADE " in raw
 
 
+@pytest.mark.parametrize("phase", ["ATTEST_FACTORY", "ATTEST"])
+def test_upgrade_verifies_schema1_future_factory_and_historical_attest_receipts(
+    phase: upgrade.PairPhase,
+) -> None:
+    receipt = upgrade.PairUpgradeReceipt(
+        attempt_id=RUN,
+        state="NO_GO",
+        cleanup="INDETERMINATE",
+        old_restored=False,
+        commit_started=False,
+        controller_id=None,
+        worker_id=None,
+        failed_phase=phase,
+    )
+    raw = (
+        f'BOCA_PAIR_UPGRADE {{"attempt_id":"{RUN}","cleanup":"INDETERMINATE",'
+        f'"commit_started":false,"controller_id":null,"failed_phase":"{phase}",'
+        '"old_restored":false,"schema":1,"state":"NO_GO","worker_id":null}\n'
+    ).encode("ascii")
+    assert cli.verify_upgrade(raw, RUN) == raw
+    assert cli.encode_upgrade(receipt) == raw
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        pytest.param({"cleanup": "ACCEPT"}, id="accept-cleanup"),
+        pytest.param({"cleanup": "NO_GO"}, id="no-go-cleanup"),
+        pytest.param({"commit_started": True}, id="commit"),
+        pytest.param({"old_restored": True}, id="restored"),
+        pytest.param({"controller_id": "3" * 64}, id="controller-id"),
+        pytest.param({"worker_id": "4" * 64}, id="worker-id"),
+        pytest.param(
+            {
+                "state": "ACCEPTED",
+                "cleanup": "ACCEPT",
+                "commit_started": True,
+                "controller_id": "3" * 64,
+                "worker_id": "4" * 64,
+            },
+            id="accepted-state",
+        ),
+        pytest.param(
+            {"state": "RECOVERED", "cleanup": "ACCEPT", "old_restored": True},
+            id="recovered-state",
+        ),
+        pytest.param({"failed_phase": "ATTEST_UNKNOWN"}, id="unknown-phase"),
+    ],
+)
+def test_upgrade_rejects_forged_factory_and_unknown_phases(changes: dict[str, object]) -> None:
+    payload = {
+        "attempt_id": RUN,
+        "cleanup": "INDETERMINATE",
+        "commit_started": False,
+        "controller_id": None,
+        "failed_phase": "ATTEST_FACTORY",
+        "old_restored": False,
+        "schema": 1,
+        "state": "NO_GO",
+        "worker_id": None,
+        **changes,
+    }
+    raw = (
+        b"BOCA_PAIR_UPGRADE "
+        + json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+        + b"\n"
+    )
+    with pytest.raises(cli.PairUpgradeCliError):
+        cli.verify_upgrade(raw, RUN)
+
+
 def test_no_go_terminal_is_not_convertible_to_accept() -> None:
     from dataclasses import replace
 

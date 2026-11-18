@@ -4,12 +4,11 @@
 
 **Leer primero [handoff G18 completo](docs/HANDOFF_G18_2026-11-18.md) y
 [issue canónico #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).**
-El producto físicamente instalado y conservado sigue siendo **G17**
-(`7f20bf0acf43b2e17812bfc35efc86a552b5a404`); Actions Boca READ_ONLY
-[#1252](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44353903240)
-y [#1253](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44354524641)
-confirmaron controller HEALTHY en `127.0.0.1:8443`, worker CREATED/PID0 y
-binding/recursos/inodes intactos. No prueban navegación, login ni tokens.
+El producto físicamente instalado sigue siendo **G17**
+(`7f20bf0acf43b2e17812bfc35efc86a552b5a404`): la lectura Boca
+[#1257](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44413009975)
+confirmó controller `HEALTHY`, motor `STOPPED`, worker `CREATED/PID0` y
+ledger `NOT_BOUND_TO_CURRENT_INSTALLATION`. No prueba navegación, login ni tokens.
 
 **G18 está MERGED y publicado, NO desplegado:** [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
 y [release #876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224)
@@ -22,9 +21,11 @@ MERGED en `8c3edd972c4be77ebae5be40a54ccff6c3202b30` después de
 3/3 PASS. **Una sola** observación forense READ_ONLY [#1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614)
 SUCCESS halló marcadores genuinos `evidence,intent,terminal`, sin `commit` ni
 `technical-postflight-v2`: `NO_GO/ATTEST`, causa exclusiva `UNPROVEN`.
-Arquitectura, QA, Operaciones y Root coincidieron en dos rutas indiscernibles:
-constructor/factory o `backend.attest`. No inventar cuál; no repetir #1255.
-[RCA](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6987374351).
+D2 reprodujo bytes idénticos para un fallo de factory o de `backend.attest`;
+#1251 sigue `ATTEST_ROUTE_UNDETERMINED`. Root, Arquitectura, QA y Operaciones
+dieron [4GO_PRE_CODE](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6993940940)
+sólo para un candidato prospectivo `ATTEST_FACTORY`. No cambia el recibo
+histórico, no autoriza deploy ni retry. No repetir #1251/#1255/#1257.
 
 **Código existente: REUTILIZAR.** Navegación URL/HTTP/intentos, evento/cola,
 Queue-it/Boca tokens y copia, polling 5 s, Telegram token/Chat ID directo y

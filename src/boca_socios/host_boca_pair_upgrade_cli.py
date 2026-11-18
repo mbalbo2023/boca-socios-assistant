@@ -336,6 +336,15 @@ def _upgrade_fields_ok(value: dict[str, object]) -> bool:
     state, cleanup = value["state"], value["cleanup"]
     restored, committed = value["old_restored"], value["commit_started"]
     controller, worker = value["controller_id"], value["worker_id"]
+    if value["failed_phase"] == "ATTEST_FACTORY" and not (
+        state == "NO_GO"
+        and cleanup == "INDETERMINATE"
+        and restored is False
+        and committed is False
+        and controller is None
+        and worker is None
+    ):
+        return False
     if (
         state not in ("ACCEPTED", "RECOVERED", "NO_GO")
         or cleanup not in ("ACCEPT", "NO_GO", "INDETERMINATE")

@@ -2,20 +2,23 @@
 
 ## Estado vigente — 18 de noviembre de 2026
 
-**G17 sigue físicamente instalado; G18 está integrado, pero NO desplegado ni
-certificado BETA.** G18 UX [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
+**G17 sigue físicamente instalado; G18 no está desplegado y BETA sigue
+NO_GO.** [Lectura #1257](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44413009975):
+G17 `7f20bf0a…`, controller `HEALTHY`, motor `STOPPED`, worker `CREATED/PID0`;
+ledger `NOT_BOUND_TO_CURRENT_INSTALLATION`. G18 UX [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
 MERGED y [release #876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224)
 SUCCESS (no repetir). El único [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452)
-FAILED `ATTEST` antes del commit; [P #1252](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44353903240)
-y [C #1253](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44354524641)
-conservaron controller G17 HEALTHY y worker CREATED/PID0.
+FAILED `ATTEST` antes del commit.
 
 **El diagnóstico forense ya se integró y ejecutó una vez**: [PR #553](https://github.com/mbalbo2023/boca-socios-assistant/pull/553)
 MERGED en `8c3edd972c4be77ebae5be40a54ccff6c3202b30`; CI/security
 3/3 PASS y única [Action #1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614)
 READ_ONLY SUCCESS. Halló evidencia, intención y recibo `NO_GO/ATTEST` sin
-commit ni postflight: **no discrimina** entre fallo de factory y de attest.
-No repetir #1251/#1255 ni afirmar RCA específico sin evidencia.
+commit ni postflight. D2 reprodujo bytes idénticos para fallo de factory y
+de `attest`: #1251 sigue `ATTEST_ROUTE_UNDETERMINED`, causa `UNPROVEN`.
+[4GO_PRE_CODE](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6993940940)
+autoriza sólo un candidato prospectivo `ATTEST_FACTORY`; no deploy ni retry.
+No repetir #1251/#1255/#1257.
 
 Ya existen rutas para URL/HTTP/intentos, colas/eventos, tokens copiables,
 polling 5 s y Telegram directo; no duplicarlas. Falta instalación física G18,

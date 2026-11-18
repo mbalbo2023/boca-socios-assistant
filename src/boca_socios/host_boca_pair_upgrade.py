@@ -32,6 +32,7 @@ _WORKER = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:
 PairPhase = Literal[
     "NONE",
     "ATTEST",
+    "ATTEST_FACTORY",
     "STAGE",
     "PARK",
     "CREATE_WORKER",
@@ -252,7 +253,7 @@ def run_pair_upgrade(
                     commit_started=False,
                     controller_id=None,
                     worker_id=None,
-                    failed_phase="ATTEST",
+                    failed_phase="ATTEST_FACTORY",
                 )
                 terminal_sink(plan, receipt, lease)
                 return receipt
