@@ -674,9 +674,16 @@ def worker_activity(
     }[snapshot.chromium_telemetry]
     if len(events) != len(snapshot.events):
         health += " " + engine_view._LIVE_WORKER_ADVISORY
+    shared_open = (
+        '<details id="worker-global-details"><summary>Diagnóstico global del worker compartido'
+        "</summary>"
+        if engine_snapshot is not None
+        else ""
+    )
+    shared_close = "</details>" if engine_snapshot is not None else ""
     return _page(
         "Actividad",
-        "<h1>Actividad</h1><h2>Actividad del worker y Chromium</h2>"
+        "<h1>Actividad</h1>" + engines + shared_open + "<h2>Actividad del worker y Chromium</h2>"
         "<p>Registro compartido por ambos motores. Se consulta cada cinco segundos.</p>"
         '<p id="worker-activity-status" role="status" aria-live="polite">'
         + ("Último evento: " + escape(latest.message) if latest else _EMPTY_WORKER)
@@ -695,7 +702,7 @@ def worker_activity(
         '<button id="worker-activity-toggle" type="button" aria-pressed="false">'
         "Pausar actualizaciones del registro</button>"
         "<noscript>Actualice esta página para consultar los eventos nuevos.</noscript>"
-        + engines
+        + shared_close
         + '<p><a href="/control">Volver al control del bot</a></p>',
         current="/control/actividad",
         script=engine_script + f"<script>{_ACTIVITY_SCRIPT}</script>",

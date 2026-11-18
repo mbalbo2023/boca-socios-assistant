@@ -307,7 +307,7 @@ const results = expressions.map(expression => {
       throw new Error('unexpected fixed DOM lookup');
     },
     querySelectorAll(selector) {
-      if (selector !== '[data-session-id]' || ![2, 3].includes(count))
+      if (selector !== 'li.engine-session[data-session-id]' || ![2, 3].includes(count))
         throw new Error('unexpected fixed DOM selector');
       return {length: ready ? count : 0};
     }
@@ -351,6 +351,21 @@ process.stdout.write(JSON.stringify(results));
     assert json.loads(completed.stdout) == [
         {"before": [False, False], "after": True, "evaluations": 1} for _expression in expressions
     ]
+
+
+def test_final_activity_refresh_reopens_collapsed_technical_controls():
+    """The last offline click must expose the refresh button before using it."""
+    module = _module()
+    source = inspect.getsource(module._viewport)
+    assert 'technical = activity.locator("#engines-global-technical")' in source
+    after_stop = source.split('step = "members_stopped_refresh"', 1)[1].split(
+        'step = "members_stopped_poll"', 1
+    )[0]
+    assert (
+        after_stop.index("await _refresh(page)")
+        < after_stop.index("await summary.click()")
+        < after_stop.index("await _refresh(activity)")
+    )
 
 
 @pytest.mark.parametrize("body_fails", [False, True])

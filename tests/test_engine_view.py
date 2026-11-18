@@ -537,7 +537,7 @@ def test_inspection_links_use_only_valid_private_session_identities() -> None:
         },
     )
 
-    links = [attrs["href"] for tag, attrs in page.elements if tag == "a"]
+    links = [attrs["href"] for tag, attrs in page.elements if tag == "a" and "href" in attrs]
     assert f"/control/sesiones/{session_id}" in links
     assert not any(str(link).startswith("https:") or "../" in str(link) for link in links)
     assert b"bearer=secret" not in body
@@ -568,12 +568,17 @@ def test_control_stays_short_and_activity_owns_histories(session_count: int) -> 
     assert all(b'id="' + engine.encode() + b'-sessions"' not in control_body for engine in engines)
     page, body, _ = render(snapshot=snapshot, activity=True)
     assert not page.forms
-    common_heading = b"<h2>Sesiones observadas</h2>"
-    assert body.count(common_heading) == 1
     for engine, label in zip(engines, ("colas y tokens", "navegadores de socios"), strict=True):
+        summary = (
+            f'<details class="activity-motor-details" id="{engine}-advanced">'
+            f"<summary>Sesiones y métricas del motor {'A' if engine == 'queues_tokens' else 'B'}</summary>"
+        ).encode()
+        assert body.count(summary) == 1
         heading = f"<h3>Sesiones de {label}</h3>".encode()
-        assert body.index(common_heading) < body.index(heading)
+        assert body.index(f'id="{engine}-live-card"'.encode()) < body.index(summary)
+        assert body.index(summary) < body.index(heading)
         assert body.index(heading) < body.index(f'id="{engine}-sessions"'.encode())
+        assert "details" in page.ancestors[f"{engine}-sessions"]
     rows = [
         attrs["data-session-id"]
         for tag, attrs in page.elements
@@ -822,6 +827,12 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
     result.contextTotals = Object.fromEntries(['queues_tokens', 'browsers_members']
       .map(engine => [engine, {created: element(engine + '-created').textContent,
         active: element(engine + '-active').textContent}]));
+    result.cards = Object.fromEntries(['queues_tokens', 'browsers_members']
+      .map(engine => [engine, Object.fromEntries(['state', 'error', 'navigation',
+        'configured-url', 'final-url', 'event', 'queue', 'tokens', 'motor-status']
+        .map(field => [field, element(engine + '-live-' + field).textContent]))]));
+    result.sessionCounts = Object.fromEntries(['queues_tokens', 'browsers_members']
+      .map(engine => [engine, element(engine + '-sessions').children.length]));
     if (input.rotation) result.inspectionLinks = element('queues_tokens-sessions').children
       .map(item => {const link = item.querySelector('[data-field="inspect"]');
         return {href: link.href, label: link.textContent};});
@@ -1080,6 +1091,170 @@ def _evidence_snapshot(session):
             }
         ],
     }
+
+
+def test_activity_poll_updates_two_live_cards_and_session_rows_from_one_engine_fetch():
+    first = _evidence_snapshot({})
+    first["observed_at"] = "2026-11-18T11:55:32Z"
+    first["engines"][0].update(
+        state="FAILED",
+        phase="WORKER_RECEIPT_UNVERIFIED",
+        requested_contexts=25,
+        created=0,
+        active=0,
+        sessions=[],
+    )
+    first["engines"].append(
+        {
+            "engine": "browsers_members",
+            "state": "RUNNING",
+            "phase": "AUTHENTICATING",
+            "requested_contexts": 1,
+            "created": 1,
+            "active": 1,
+            "closed": 0,
+            "failed": 0,
+            "sessions": [
+                {
+                    "session_id": str(uuid4()),
+                    "state": "ACTIVE",
+                    "phase": "AUTHENTICATING",
+                    "observed_at": "2026-11-18T11:54:00Z",
+                    "configured_url": "https://boca.example.invalid/login?secret=hidden",
+                    "navigation_attempt": {
+                        "purpose": "SITE_URL",
+                        "result": "RETURNED",
+                        "http_status": 200,
+                        "started_at": "2026-11-18T11:52:00Z",
+                        "display_url": "https://boca.example.invalid/login?bearer=hidden",
+                    },
+                    "display_url": "https://boca.example.invalid/login/final?pass=hidden",
+                }
+            ],
+        }
+    )
+    second = copy.deepcopy(first)
+    second["observed_at"] = "2026-11-18T12:00:00Z"
+    second["engines"][0].update(
+        state="RUNNING",
+        phase="QUEUE_ACTIVE",
+        requested_contexts=1,
+        created=1,
+        active=1,
+        sessions=[
+            {
+                "session_id": str(uuid4()),
+                "state": "ACTIVE",
+                "observed_at": "2026-11-18T11:59:00Z",
+                "event_state": "EVENT_VERIFIED",
+                "queue_state": "QUEUE_ACTIVE",
+                "has_target_url": True,
+                "configured_url": "https://queue.example.invalid/start?secret=hidden",
+            }
+        ],
+    )
+    second["engines"][1].update(
+        state="FAILED",
+        phase="WORKER_RECEIPT_UNVERIFIED",
+        requested_contexts=25,
+        created=0,
+        active=0,
+        sessions=[],
+    )
+    page, body, _ = render(snapshot=first, activity=True)
+    assert b"secret=hidden" not in body and b"bearer=hidden" not in body
+    assert "No se confirmó la apertura" in page.text["queues_tokens-live-error"]
+    assert "https://boca.example.invalid/login" in page.text["browsers_members-live-navigation"]
+
+    actual = _run_poll_script([first, second, "network-error"], mode="activity", rotation=True)
+    failed, changed, historical = actual["results"]
+    assert failed["cards"]["queues_tokens"]["error"] == page.text["queues_tokens-live-error"]
+    assert (
+        failed["cards"]["browsers_members"]["navigation"]
+        == page.text["browsers_members-live-navigation"]
+    )
+    assert (
+        failed["cards"]["browsers_members"]["configured-url"]
+        == page.text["browsers_members-live-configured-url"]
+    )
+    assert (
+        failed["cards"]["browsers_members"]["final-url"]
+        == page.text["browsers_members-live-final-url"]
+    )
+    assert failed["sessionCounts"] == {"queues_tokens": 0, "browsers_members": 1}
+    assert changed["sessionCounts"] == {"queues_tokens": 1, "browsers_members": 0}
+    assert changed["contextTotals"]["queues_tokens"] == {"created": "1", "active": "1"}
+    assert (
+        "https://queue.example.invalid/start" in changed["cards"]["queues_tokens"]["configured-url"]
+    )
+    assert "evento identificado" in changed["cards"]["queues_tokens"]["event"]
+    assert "Cola activa observada" in changed["cards"]["queues_tokens"]["queue"]
+    assert "Enlaces observados: 1" in changed["cards"]["queues_tokens"]["tokens"]
+    assert "Sin tokens" in changed["cards"]["browsers_members"]["tokens"]
+    assert "histórico" in historical["cards"]["queues_tokens"]["motor-status"]
+    assert historical["sessionCounts"] == changed["sessionCounts"]
+    assert sum(request["url"] == "/control/motores.json" for request in actual["requests"]) == 3
+    assert not any(
+        "secret=hidden" in result or "bearer=hidden" in result
+        for result in (
+            item["navigation"] + item["configured-url"] + item["final-url"]
+            for cycle in (failed, changed)
+            for item in cycle["cards"].values()
+        )
+    )
+
+
+def test_activity_shows_selected_member_once_above_closed_technical_details():
+    member_id = str(uuid4())
+    member = MemberView(member_id, "Titular de ejemplo", "t•••@example.invalid", True)
+    snapshot = _evidence_snapshot({})
+    snapshot["engines"][0].update(engine="browsers_members", member_id=member_id, sessions=[])
+    page, body, _ = render(snapshot=snapshot, activity=True, members=(member,))
+    assert page.text["browsers_members-current-member"] == (
+        "Titular de ejemplo · t•••@example.invalid"
+    )
+    assert body.count(b'id="browsers_members-current-member"') == 1
+    assert "details" not in page.ancestors["browsers_members-current-member"]
+    assert (
+        body.index(b'id="browsers_members-live-card"')
+        < body.index(b'id="browsers_members-current-member"')
+        < body.index(b'id="browsers_members-advanced"')
+    )
+
+
+def test_activity_advanced_sessions_are_closed_and_private_link_has_distinct_identity_node():
+    """The CI visual harness must count list rows, not every session-ID-bearing link."""
+    first, second = str(uuid4()), str(uuid4())
+    snapshot = _evidence_snapshot(
+        {"session_id": first, "browser": "chromium", "has_target_url": True}
+    )
+    browser = copy.deepcopy(snapshot["engines"][0])
+    browser.update(
+        engine="browsers_members",
+        sessions=[{"session_id": second, "browser": "webkit", "has_target_url": False}],
+    )
+    snapshot["engines"].append(browser)
+    page, _, _ = render(snapshot=snapshot, activity=True)
+    rows = [attrs for tag, attrs in page.elements if tag == "li" and "data-session-id" in attrs]
+    all_session_identity_nodes = [attrs for _, attrs in page.elements if "data-session-id" in attrs]
+    assert len(rows) == 2
+    assert len(all_session_identity_nodes) == 3  # A private inspect link plus two session rows.
+    assert (
+        next(
+            attrs
+            for tag, attrs in page.elements
+            if tag == "a" and attrs.get("id") == "queues_tokens-live-inspect"
+        )["href"]
+        == f"/control/sesiones/{first}"
+    )
+    for engine in ("queues_tokens", "browsers_members"):
+        advanced = next(
+            attrs
+            for tag, attrs in page.elements
+            if tag == "details" and attrs.get("id") == f"{engine}-advanced"
+        )
+        assert "open" not in advanced
+        assert "details" in page.ancestors[f"{engine}-sessions"]
 
 
 def test_event_and_navigation_labels_remain_closed_and_private():
