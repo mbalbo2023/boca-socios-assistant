@@ -65,6 +65,75 @@ def test_unverified_start_card_precedes_forms_without_claiming_no_event(engine, 
     )
 
 
+@pytest.mark.parametrize("engine", [QUEUES, MEMBERS])
+def test_motor_a_card_explains_unverified_start_without_navigation(engine):
+    """No worker receipt and zero sessions cannot attest a URL, HTTP or provider response."""
+    snapshot = _snapshot(engine)
+    page, body, _ = render(snapshot=snapshot, engine=engine)
+    prefix = f"{engine}-live-"
+
+    assert page.text[prefix + "configured-url"] == (
+        "No disponible en observación; ver Configuración"
+    )
+    assert page.text[prefix + "navigation"] == "Sin intento observado"
+    assert page.text[prefix + "final-url"] == "Sin URL final observada"
+    assert "Causa técnica específica no registrada" in page.text[prefix + "error"]
+    assert "No se confirmó la apertura del navegador" in page.text[prefix + "error"]
+    assert page.text[prefix + "contexts"] == "25 solicitados · 0 creados · 0 activos"
+    assert page.text[prefix + "event"] == page.text[prefix + "queue"] == "No comprobado"
+    assert page.text[prefix + "tokens"] == "Sin tokens ni enlaces comprobados"
+    assert "HTTP " not in page.text[prefix + "card"]
+    assert SECRET not in body.decode()
+
+    fresh = _poll(engine, [{"engine": snapshot, "activity": _activity()}])["results"][0]
+    for name in ("configured-url", "navigation", "final-url", "error", "event", "queue"):
+        assert fresh[name]["text"] == page.text[prefix + name]
+
+
+@pytest.mark.parametrize("engine", [QUEUES, MEMBERS])
+def test_failed_logical_snapshot_and_later_stop_do_not_claim_current_physical_failure(engine):
+    """The last logical FAILED can survive a STOP; neither GET proves worker health."""
+    old = _snapshot(engine)
+    page, _, _ = render(snapshot=old, engine=engine)
+    prefix = f"{engine}-live-"
+    card = page.text[prefix + "card"]
+    assert "Último estado lógico registrado:" in card
+    assert "Último cambio lógico:" in card
+    assert "Consulta del motor:" in card
+    assert page.text[prefix + "physical-status"] == "No comprobada en esta vista"
+    assert page.text[prefix + "status-scope"] == (
+        "El resultado lógico no acredita un worker activo ni un fallo físico actual."
+    )
+    assert "No se confirmó la apertura del navegador" in page.text[prefix + "error"]
+    assert "No se verificó navegación ni URL visitada" in page.text[prefix + "error"]
+    assert page.text[prefix + "motor-time"] == "2026-11-17 14:00:00 ART"
+    assert page.text[prefix + "motor-query"] == "2026-11-17 15:00:00 ART"
+
+    # The earliest visible detail after context counts must be the actual unknown cause,
+    # not speculative URL/event/token assertions far above the fold on a tablet.
+    indexes = {attrs.get("id"): index for index, (_, attrs) in enumerate(page.elements)}
+    assert indexes[prefix + "contexts"] < indexes[prefix + "error"]
+    for name in ("configured-url", "navigation", "final-url", "event", "queue", "tokens"):
+        assert indexes[prefix + "error"] < indexes[prefix + name]
+
+    # A later failed GET leaves the previous logical result historical, not physical.
+    updated, stale = _poll(
+        engine,
+        [{"engine": old, "activity": _activity()}, {"engine": "offline", "activity": _activity()}],
+    )["results"]
+    assert updated["state"]["text"].startswith("Falló")
+    assert stale["state"] == updated["state"]
+    assert (
+        updated["physical-status"]["text"]
+        == stale["physical-status"]["text"]
+        == ("No comprobada en esta vista")
+    )
+    assert updated["status-scope"]["text"] == stale["status-scope"]["text"]
+    assert updated["motor-time"]["text"] == "2026-11-17 14:00:00 ART"
+    assert updated["motor-query"]["text"] == "2026-11-17 15:00:00 ART"
+    assert "histórico" in stale["motor-status"]["text"]
+
+
 def _session(session_id=SESSION, **fields):
     return {
         "session_id": session_id,
@@ -110,6 +179,174 @@ def test_authentication_card_preserves_evidence_scope_and_private_link():
     link = next(attrs for _, attrs in page.elements if attrs.get("id") == MEMBERS + "-live-inspect")
     assert link["href"] == "/control/sesiones/" + SECOND
     assert SECRET not in summary
+
+
+@pytest.mark.parametrize("engine", [QUEUES, MEMBERS])
+@pytest.mark.parametrize("result", ["FAILED", "RETURNED"])
+def test_navigation_evidence_shows_safe_url_time_result_and_proven_http_only(engine, result):
+    session = _session(
+        configured_url=f"https://example.invalid/configurada?pass={SECRET}#fragment",
+        navigation_attempt={
+            "purpose": "SITE_URL",
+            "result": result,
+            "display_url": f"https://example.invalid/navegacion?pass={SECRET}#fragment",
+            "started_at": "2026-11-17T17:22:00Z",
+            "http_status": 403,
+        },
+        display_url=f"https://example.invalid/final?pass={SECRET}#fragment",
+        final_url_observed_at="2026-11-17T17:23:00Z",
+        has_target_url=True,
+        target_url=f"https://example.invalid/pase?pass={SECRET}",
+    )
+    snapshot = _snapshot(
+        engine, state="RUNNING", phase="QUEUE_ACTIVE", created=1, active=1, sessions=[session]
+    )
+    page, body, _ = render(snapshot=snapshot, engine=engine)
+    prefix = f"{engine}-live-"
+
+    assert page.text[prefix + "configured-url"] == "Sesión 1: https://example.invalid/configurada"
+    assert page.text[prefix + "navigation"].startswith(
+        "Sesión 1 · Carga de SITE_URL · https://example.invalid/navegacion · "
+        "2026-11-17 14:22:00 ART · "
+    )
+    assert ("HTTP 403" in page.text[prefix + "navigation"]) is (result == "RETURNED")
+    assert page.text[prefix + "final-url"] == (
+        "Sesión 1: https://example.invalid/final · 2026-11-17 14:23:00 ART"
+    )
+    link = next(attrs for _, attrs in page.elements if attrs.get("id") == prefix + "inspect")
+    assert link["href"] == "/control/sesiones/" + SESSION
+    assert SECRET not in body.decode()
+
+    actual = _poll(engine, [{"engine": snapshot, "activity": _activity()}])["results"][0]
+    for field in ("configured-url", "navigation", "final-url", "event", "queue", "tokens"):
+        assert actual[field]["text"] == page.text[prefix + field]
+    assert actual["inspect"]["href"] == link["href"]
+    assert SECRET not in json.dumps(actual)
+
+
+@pytest.mark.parametrize("engine", [QUEUES, MEMBERS])
+def test_closed_session_evidence_is_historical_and_userinfo_is_not_disclosed(engine):
+    session = _session(
+        state="CLOSED",
+        configured_url=f"https://user:{SECRET}@example.invalid/configurada?pass={SECRET}",
+        navigation_attempt={
+            "purpose": "SITE_URL",
+            "result": "FAILED",
+            "display_url": f"https://user:{SECRET}@example.invalid/navegacion?pass={SECRET}",
+            "started_at": "2026-11-17T17:22:00Z",
+            "http_status": 502,
+        },
+        display_url=f"https://example.invalid/final?pass={SECRET}",
+        final_url_observed_at="2026-11-17T17:23:00Z",
+        event_state="UNRECOGNIZED",
+        queue_state="UNKNOWN",
+    )
+    snapshot = _snapshot(
+        engine, state="STOPPED", phase="STOPPED", created=1, closed=1, sessions=[session]
+    )
+    page, body, _ = render(snapshot=snapshot, engine=engine)
+    prefix = f"{engine}-live-"
+    assert page.text[prefix + "configured-url"] == "Sesión 1: Dato no recibido (muestra histórica)"
+    assert page.text[prefix + "navigation"].startswith(
+        "Sesión 1 · Carga de SITE_URL · Dato no recibido · 2026-11-17 14:22:00 ART · "
+    )
+    assert page.text[prefix + "navigation"].endswith("(muestra histórica)")
+    assert "HTTP 502" not in page.text[prefix + "navigation"]
+    assert page.text[prefix + "final-url"].endswith("(muestra histórica)")
+    assert page.text[prefix + "event"] == page.text[prefix + "queue"] == "No comprobado"
+    assert SECRET not in body.decode()
+
+    fresh = _poll(engine, [{"engine": snapshot, "activity": _activity()}])["results"][0]
+    for field in ("configured-url", "navigation", "final-url", "event", "queue"):
+        assert fresh[field]["text"] == page.text[prefix + field]
+
+
+def test_multiple_sessions_keep_navigation_and_tokens_tied_to_real_session():
+    snapshot = _snapshot(
+        state="RUNNING",
+        phase="QUEUE_ACTIVE",
+        created=2,
+        active=1,
+        sessions=[
+            _session(
+                state="CLOSED",
+                observed_at="2026-11-17T17:40:00Z",
+                event_state="NO_EVENT_CONFIRMED",
+                queue_state="UNKNOWN",
+                configured_url="https://example.invalid/antes",
+                navigation_attempt={
+                    "purpose": "SITE_URL",
+                    "result": "FAILED",
+                    "display_url": "https://example.invalid/antes",
+                    "started_at": "2026-11-17T17:39:00Z",
+                },
+            ),
+            _session(
+                SECOND,
+                event_state="EVENT_VERIFIED",
+                queue_state="QUEUE_ACTIVE",
+                configured_url="https://example.invalid/ahora",
+                has_target_url=True,
+            ),
+        ],
+    )
+    page, _, _ = render(snapshot=snapshot, engine=QUEUES)
+    prefix = QUEUES + "-live-"
+    assert (
+        page.text[prefix + "configured-url"]
+        == "Sesión 1: https://example.invalid/antes (muestra histórica)"
+    )
+    assert page.text[prefix + "navigation"].startswith("Sesión 1 · Carga de SITE_URL")
+    assert "Sesión 1 informa que no hay evento (muestra histórica)" in page.text[prefix + "event"]
+    assert "Sesión 2: evento identificado" in page.text[prefix + "event"]
+    assert page.text[prefix + "queue"].startswith("Sesión 2: Cola activa observada")
+    assert page.text[prefix + "tokens"] == "Enlaces observados: 1"
+    assert (
+        next(attrs for _, attrs in page.elements if attrs.get("id") == prefix + "inspect")["href"]
+        == "/control/sesiones/" + SECOND
+    )
+
+
+@pytest.mark.parametrize("engine", [QUEUES, MEMBERS])
+def test_worker_feed_is_collapsed_and_controls_do_not_repeat_visible_engine_status(engine):
+    page, _, _ = render(snapshot=_snapshot(engine), engine=engine)
+    prefix = f"{engine}-live-"
+    details = next(
+        attrs
+        for tag, attrs in page.elements
+        if tag == "details" and attrs.get("id") == prefix + "worker-details"
+    )
+    assert "open" not in details  # Only owner interaction expands shared diagnostics.
+    assert "details" in page.ancestors[prefix + "worker-status"]
+    assert "details" in page.ancestors[prefix + "record-0"]
+    assert "no corresponde a navegación del motor" in page.text[prefix + "worker-details"]
+
+    assert page.text[f"{engine}-heading"].startswith("Acciones del motor ")
+    advanced = next(
+        attrs
+        for tag, attrs in page.elements
+        if tag == "details" and attrs.get("id") == f"{engine}-advanced-status"
+    )
+    assert "open" not in advanced
+    assert "details" in page.ancestors[f"{engine}-state"]
+    assert "details" in page.ancestors[f"{engine}-phase"]
+    assert f"{engine}-start" in {attrs.get("id") for tag, attrs in page.elements if tag == "form"}
+
+
+def test_shared_worker_records_keep_source_without_duplicate_prefix_after_poll():
+    actual = _poll(QUEUES, [{"engine": _snapshot(), "activity": _activity(_event(1))}])
+    record = actual["results"][0]["record-0"]["text"]
+    assert (
+        record
+        == "2026-11-17 15:01:00 ART · Ejecutor: solicitud recibida, verificando el servicio Boca."
+    )
+    assert actual["results"][0]["worker-status"]["text"] == (
+        "Registros del worker compartido disponibles."
+    )
+    assert [request["url"] for request in actual["requests"]] == [
+        "/control/motores.json",
+        "/control/actividad.json",
+    ]
 
 
 def test_negative_engine_phase_alone_does_not_confirm_absence_of_event():
@@ -182,7 +419,7 @@ vm.runInNewContext(fixture.script, {
 """
 
 
-def _poll(engine, cycles, *, combined=False):
+def _poll(engine, cycles, *, combined=False, projected_fields=()):
     page, body, _ = render(snapshot=_snapshot(engine), engine=None if combined else engine)
     node = shutil.which("node")
     assert node
@@ -191,7 +428,8 @@ def _poll(engine, cycles, *, combined=False):
         input=json.dumps(
             {
                 "engine": engine,
-                "elements": [attrs for _, attrs in page.elements if attrs.get("id")],
+                "elements": [attrs for _, attrs in page.elements if attrs.get("id")]
+                + [{"id": f"{engine}-live-{field}"} for field in projected_fields],
                 "text": page.text,
                 "script": "\n".join(re.findall(r"<script>(.*?)</script>", body.decode(), re.S)),
                 "cycles": cycles,
@@ -247,6 +485,49 @@ def test_control_refreshes_both_motor_summaries_once_without_worker_timeline(eng
     assert "histórico" not in recovered["motor-status"]["text"]
     assert [item["url"] for item in result["requests"]] == ["/control/motores.json"] * 3
     assert result["intervals"] == [5000]
+
+
+@pytest.mark.parametrize("engine", [QUEUES, MEMBERS])
+def test_combined_home_poll_preserves_real_session_url_navigation_and_final_evidence(engine):
+    """HOME's shared motor projection must load its existing safe URL helpers."""
+    session = _session(
+        configured_url=f"https://example.invalid/configurada?token={SECRET}",
+        navigation_attempt={
+            "purpose": "SITE_URL",
+            "result": "RETURNED",
+            "display_url": f"https://example.invalid/navegar?token={SECRET}",
+            "started_at": "2026-11-17T17:21:00Z",
+            "http_status": 403,
+        },
+        display_url=f"https://example.invalid/final?token={SECRET}",
+        final_url_observed_at="2026-11-17T17:22:00Z",
+    )
+    snapshot = _snapshot(
+        engine, state="RUNNING", phase="QUEUE_ACTIVE", created=1, active=1, sessions=[session]
+    )
+    initial, body, _ = render(snapshot=snapshot, engine=None)
+    prefix = f"{engine}-live-"
+    assert initial.text[prefix + "navigation"] == (
+        "Sesión 1 · Carga de SITE_URL · https://example.invalid/navegar · "
+        "2026-11-17 14:21:00 ART · La llamada de navegación retornó · HTTP 403"
+    )
+    assert SECRET not in body.decode()
+
+    current = _poll(
+        engine,
+        [{"engine": snapshot}],
+        combined=True,
+        projected_fields=("configured-url", "final-url"),
+    )
+    detail, _, _ = render(snapshot=snapshot, engine=engine)
+    assert current["results"][0]["configured-url"]["text"] == detail.text[prefix + "configured-url"]
+    assert current["results"][0]["final-url"]["text"] == detail.text[prefix + "final-url"]
+    assert current["results"][0]["navigation"]["text"] == initial.text[prefix + "navigation"]
+    assert current["results"][0]["tokens"]["text"] == initial.text[prefix + "tokens"]
+    assert current["results"][0]["event"]["text"] == initial.text[prefix + "event"]
+    assert current["results"][0]["queue"]["text"] == initial.text[prefix + "queue"]
+    assert SECRET not in json.dumps(current["results"])
+    assert [request["url"] for request in current["requests"]] == ["/control/motores.json"]
 
 
 def _event(minute, message=HOST_MESSAGE):

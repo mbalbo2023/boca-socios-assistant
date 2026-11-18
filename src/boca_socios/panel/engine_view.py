@@ -187,7 +187,9 @@ _LIVE_ERRORS = {
     )
 }
 _UNCONFIRMED_OPEN = (
-    "No se confirmó la apertura del navegador. No hay una inspección de página acreditada."
+    "No se confirmó la apertura del navegador. No hay una inspección de página acreditada. "
+    "No se verificó navegación ni URL visitada. "
+    "Causa técnica específica no registrada."
 )
 _LIVE_SOURCE = {
     "owner": "Panel",
@@ -612,7 +614,7 @@ _LIVE_PROJECTION_SCRIPT = r"""
       && Number.isFinite(Date.parse(value));
   }
   function projection(item) {
-    let latest = null, navigation = null, revealed = null;
+    let latest = null, lastNavigation = null, configured = null, finalURL = null, revealed = null;
     let targetCount = 0, authCount = 0, authenticating = 0, domUnverified = 0;
     const events = new Map(), queues = new Map();
     const phase = known(liveLabels.phases, item.phase) ? liveLabels.phases[item.phase] : 'Etapa sin verificar';
@@ -645,12 +647,25 @@ _LIVE_PROJECTION_SCRIPT = r"""
           }
         }
       }
+      const observedTime = stamp(session.observed_at) ? Date.parse(session.observed_at) : -Infinity;
+      if (typeof session.configured_url === 'string' && session.configured_url.trim() &&
+          (!configured || observedTime > configured.time)) {
+        configured = {value: session.configured_url, index, active, time: observedTime};
+      }
+      if (typeof session.display_url === 'string' && session.display_url.trim()) {
+        const finalTime = stamp(session.final_url_observed_at) ?
+          Date.parse(session.final_url_observed_at) : observedTime;
+        if (!finalURL || finalTime > finalURL.time) {
+          finalURL = {session, index, active, time: finalTime};
+        }
+      }
       const attempt = session.navigation_attempt;
       if (attempt && known(evidenceNames.purpose, attempt.purpose) &&
           known(evidenceNames.result, attempt.result) &&
-          (!navigation || (stamp(attempt.started_at) &&
-            (!stamp(navigation.started_at) || Date.parse(attempt.started_at) > Date.parse(navigation.started_at))))) {
-        navigation = attempt;
+          (!lastNavigation || (stamp(attempt.started_at) &&
+            (!stamp(lastNavigation.attempt.started_at) ||
+              Date.parse(attempt.started_at) > Date.parse(lastNavigation.attempt.started_at))))) {
+        lastNavigation = {attempt, index, active};
       }
       if (session.has_target_url === true) targetCount++;
       if (session.has_auth === true) authCount++;
@@ -666,6 +681,7 @@ _LIVE_PROJECTION_SCRIPT = r"""
     if (domUnverified) authentication.push(
       phaseNames.AUTH_TOKENS_OBSERVED_DOM_UNVERIFIED + ': ' + domUnverified + ' sesión(es)');
     if (!error && ['FAILED', 'INDETERMINATE', 'UNCERTAIN'].includes(item.state)) error = state(item.state);
+    const historical = sample => sample.active ? '' : ' (muestra histórica)';
     return {
       state: state(item.state), phase,
       contexts: number(item.requested_contexts) + ' solicitados · ' + number(item.created) +
@@ -674,10 +690,16 @@ _LIVE_PROJECTION_SCRIPT = r"""
       'page-time': latest ? formatPrivateTime(latest) : 'Sin observación',
       event: [...events.values()].map(sample => sample.text).join(' · ') || 'No comprobado',
       queue: [...queues.values()].map(sample => sample.text).join(' · ') || 'No comprobado',
+      'configured-url': configured ? 'Sesión ' + (configured.index + 1) + ': ' +
+        evidenceURL(configured.value) + historical(configured) :
+        'No disponible en observación; ver Configuración',
+      'final-url': finalURL ? 'Sesión ' + (finalURL.index + 1) + ': ' +
+        fieldValue(finalURL.session, 'display_url') + historical(finalURL) :
+        'Sin URL final observada',
       tokens: tokens.join(' · ') || 'Sin tokens ni enlaces comprobados',
       authentication: authentication.join(' · ') || 'Sin observación de autenticación',
-      navigation: navigation ? evidenceNames.purpose[navigation.purpose] + ' · ' +
-        evidenceNames.result[navigation.result] : 'Sin intento observado',
+      navigation: lastNavigation ? 'Sesión ' + (lastNavigation.index + 1) + ' · ' +
+        navigation(lastNavigation.attempt) + historical(lastNavigation) : 'Sin intento observado',
       error: error || 'Sin bloqueo informado', revealed
     };
   }
@@ -739,8 +761,12 @@ _LIVE_MOTOR_SCRIPT = """
       for (let i = 0; i < 5; i++) {
         const node = card('record-' + i);
         const item = records[i];
-        if (item) setText(node, formatPrivateTime(item.at) + ' · ' +
-          liveLabels.sources[item.source] + ' · ' + item.message);
+        if (item) {
+          const source = liveLabels.sources[item.source];
+          const message = item.message.startsWith(source + ':') || item.message.startsWith(source + ' ') ?
+            item.message : source + ' · ' + item.message;
+          setText(node, formatPrivateTime(item.at) + ' · ' + message);
+        }
         if (node.hidden !== !item) node.hidden = !item;
       }
       put('worker-time', formatPrivateTime(data.observed_at));
@@ -778,6 +804,7 @@ _CONTROL_SCRIPT = (
     + _LIVE_CONSTANTS
     + _EVIDENCE_CONSTANTS
     + _POLL_START
+    + _SESSION_FIELDS_SCRIPT
     + _EMPTY_ENGINE_SCRIPT
     + "function updateSessions() {}\n"
     + _POLL_END
@@ -1158,6 +1185,12 @@ def _live_projection(item: Mapping[str, object]) -> tuple[dict[str, str], str | 
     latest: datetime | None = None
     navigation: Mapping[str, object] | None = None
     navigation_time: datetime | None = None
+    navigation_index = 0
+    navigation_historical = False
+    configured: tuple[int, Mapping[str, object]] | None = None
+    configured_time: datetime | None = None
+    final_url: tuple[int, Mapping[str, object]] | None = None
+    final_url_time: datetime | None = None
     inspection = None
     targets = auth = authenticating = dom_unverified = 0
     phase = str(item.get("phase"))
@@ -1196,6 +1229,30 @@ def _live_projection(item: Mapping[str, object]) -> tuple[dict[str, str], str | 
                         ": " if field == "queue_state" else "" if label.startswith(":") else " "
                     )
                     samples[code] = (rank, f"Sesión {index}{separator}{label}{history}")
+        configured_value = session.get("configured_url")
+        if (
+            isinstance(configured_value, str)
+            and configured_value.strip()
+            and (
+                configured is None
+                or (when is not None and (configured_time is None or when > configured_time))
+            )
+        ):
+            configured, configured_time = (index, session), when
+        final_value = session.get("display_url")
+        final_when = _live_stamp(session.get("final_url_observed_at")) or when
+        if (
+            isinstance(final_value, str)
+            and final_value.strip()
+            and (
+                final_url is None
+                or (
+                    final_when is not None
+                    and (final_url_time is None or final_when > final_url_time)
+                )
+            )
+        ):
+            final_url, final_url_time = (index, session), final_when
         attempt = session.get("navigation_attempt")
         if (
             isinstance(attempt, Mapping)
@@ -1207,6 +1264,7 @@ def _live_projection(item: Mapping[str, object]) -> tuple[dict[str, str], str | 
                 when is not None and (navigation_time is None or when > navigation_time)
             ):
                 navigation, navigation_time = attempt, when
+                navigation_index, navigation_historical = index, not active
         has_target = session.get("has_target_url") is True
         targets += has_target
         auth += has_auth
@@ -1227,6 +1285,16 @@ def _live_projection(item: Mapping[str, object]) -> tuple[dict[str, str], str | 
     ]
     if error is None and state in {"FAILED", "INDETERMINATE", "UNCERTAIN"}:
         error = _STATES[state]
+    configured_text = "No disponible en observación; ver Configuración"
+    if configured is not None:
+        index, session = configured
+        history = " (muestra histórica)" if session.get("state") != "ACTIVE" else ""
+        configured_text = f"Sesión {index}: {_evidence_url(session.get('configured_url'))}{history}"
+    final_text = "Sin URL final observada"
+    if final_url is not None:
+        index, session = final_url
+        history = " (muestra histórica)" if session.get("state") != "ACTIVE" else ""
+        final_text = f"Sesión {index}: {_session_value(session, 'display_url')}{history}"
     return (
         {
             "state": _STATES.get(state, "Estado desconocido"),
@@ -1241,12 +1309,13 @@ def _live_projection(item: Mapping[str, object]) -> tuple[dict[str, str], str | 
             "page-time": _time(latest.isoformat() if latest else None),
             "event": " · ".join(text for _, text in event_samples.values()) or "No comprobado",
             "queue": " · ".join(text for _, text in queue_samples.values()) or "No comprobado",
+            "configured-url": configured_text,
+            "final-url": final_text,
             "tokens": " · ".join(tokens) or "Sin tokens ni enlaces comprobados",
             "authentication": " · ".join(authentication) or "Sin observación de autenticación",
             "navigation": (
-                _evidence_name("purpose", navigation.get("purpose"))
-                + " · "
-                + _evidence_name("result", navigation.get("result"))
+                f"Sesión {navigation_index} · {_navigation(navigation)}"
+                + (" (muestra histórica)" if navigation_historical else "")
                 if navigation is not None
                 else "Sin intento observado"
             ),
@@ -1271,24 +1340,32 @@ def _live_card(engine: str, snapshot: Mapping[str, object]) -> str:
     )
     fields = {
         "contexts": "Contextos",
+        "error": "Error o bloqueo",
+        "configured-url": "URL configurada según sesión",
+        "navigation": "Último intento de navegación registrado",
+        "final-url": "Última URL final observada",
         "event": "Evento según sesión",
         "queue": "Cola según sesión",
         "tokens": "Tokens y enlaces",
         **(
             {
-                "navigation": "Último intento de navegación registrado",
                 "authentication": "Autenticación según sesión",
             }
             if engine == "browsers_members"
             else {}
         ),
-        "error": "Error o bloqueo",
     }
     return (
         f'<section class="engine-live-card" id="{prefix}card" aria-label="{label}">'
         f"<h2>{label}</h2>"
-        f'<p aria-live="polite"><strong id="{prefix}state">{escape(values["state"])}</strong>'
+        f'<p aria-live="polite">Último estado lógico registrado: '
+        f'<strong id="{prefix}state">{escape(values["state"])}</strong>'
         f' · <span id="{prefix}phase">{escape(values["phase"])}</span></p>'
+        f'<p>Último cambio lógico: <span id="{prefix}motor-time">{values["motor-time"]}</span>'
+        f' · Actividad física actual: <span id="{prefix}physical-status">'
+        "No comprobada en esta vista</span></p>"
+        f'<p id="{prefix}status-scope">El resultado lógico no acredita un worker activo '
+        "ni un fallo físico actual.</p>"
         "<dl>"
         + "".join(
             f'<dt>{term}</dt><dd><span id="{prefix}{name}">{escape(values[name])}</span>'
@@ -1302,12 +1379,12 @@ def _live_card(engine: str, snapshot: Mapping[str, object]) -> str:
         )
         + "</dl>"
         f'<p>Última observación de página: <span id="{prefix}page-time">{values["page-time"]}</span><br>'
-        f'Último cambio registrado del motor: <span id="{prefix}motor-time">{values["motor-time"]}</span><br>'
         f'Consulta del motor: <span id="{prefix}motor-query">{_time(snapshot.get("observed_at"))}</span></p>'
         f'<p id="{prefix}motor-status" role="status">'
         + ("Consulta del motor disponible." if item else "Estado del motor sin verificar.")
         + "</p>"
-        "<h3>Últimos registros del worker compartido</h3>"
+        f'<details id="{prefix}worker-details"><summary>Registro técnico global del worker '
+        "compartido (no corresponde a navegación del motor)</summary>"
         "<p>Son registros globales, no navegaciones confirmadas de este motor.</p>"
         f'<p id="{prefix}worker-status" role="status">Aún no hay actividad verificable.</p>'
         f'<p id="{prefix}worker-advisory" hidden></p>'
@@ -1315,7 +1392,7 @@ def _live_card(engine: str, snapshot: Mapping[str, object]) -> str:
         + "".join(f'<li id="{prefix}record-{index}" hidden></li>' for index in range(5))
         + "</ol>"
         f'<p>Consulta de actividad: <span id="{prefix}worker-time">Sin consultar</span></p>'
-        '<p><a href="/control/actividad">Abrir actividad detallada</a></p></section>'
+        '<p><a href="/control/actividad">Abrir actividad detallada</a></p></details></section>'
     )
 
 
@@ -1329,6 +1406,7 @@ def _section(
     *,
     controls: bool = True,
     summary: bool = False,
+    compact_controls: bool = False,
 ) -> str:
     state = escape(_STATES.get(str(item.get("state")), "Estado desconocido"))
     metrics = "".join(
@@ -1361,12 +1439,24 @@ def _section(
         )
     return (
         f'<section data-engine="{engine}" aria-labelledby="{engine}-heading">'
-        f'<h2 id="{engine}-heading">Motor {"A" if engine == "queues_tokens" else "B"}: {_ENGINES[engine]}</h2>'
-        f'<p>Estado observado: <strong id="{engine}-state">{state}</strong></p>'
-        f'<p>Etapa: <span id="{engine}-phase">'
+        f'<h2 id="{engine}-heading">'
+        + (
+            f"Acciones del motor {'A' if engine == 'queues_tokens' else 'B'}"
+            if compact_controls
+            else f"Motor {'A' if engine == 'queues_tokens' else 'B'}: {_ENGINES[engine]}"
+        )
+        + "</h2>"
+        + (
+            f'<details id="{engine}-advanced-status"><summary>Estado técnico adicional del motor</summary>'
+            if compact_controls
+            else ""
+        )
+        + f'<p>Estado observado: <strong id="{engine}-state">{state}</strong></p>'
+        + f'<p>Etapa: <span id="{engine}-phase">'
         + escape(_LIVE_PHASE.get(str(item.get("phase")), "Etapa sin verificar"))
         + "</span><br>"
-        f'Última observación: <span id="{engine}-updated">{_time(item.get("updated_at"))}</span></p>'
+        + f'Última observación: <span id="{engine}-updated">{_time(item.get("updated_at"))}</span></p>'
+        + ("</details>" if compact_controls else "")
         + current_member
         + (_compact_summary(engine, item) if summary else "")
         + (
@@ -1498,7 +1588,16 @@ def page(
         content += '<p>Configure la URL de destino antes de iniciar. <a href="/configuracion">Abrir configuración</a></p>'
     content += _legacy_recovery(snapshot, csrf, operations)
     sections = "".join(
-        _section(name, item, csrf, operations, members, site_url_ready, summary=engine is None)
+        _section(
+            name,
+            item,
+            csrf,
+            operations,
+            members,
+            site_url_ready,
+            summary=engine is None,
+            compact_controls=engine is not None,
+        )
         for name, item in engines.items()
     )
     content += sections if engine is not None else f'<div class="motor-panels">{sections}</div>'

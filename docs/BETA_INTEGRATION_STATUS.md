@@ -1,5 +1,70 @@
 # Estado de integración BETA
 
+## Último checkpoint: G17 Motor A / UX evidenciable (18-Nov-2026 ART)
+
+**Instalación actual G16 aceptada; no repetir** release874, protected APPLY
+#1228 ACCEPTED y postflight #1230 SUCCESS sobre
+`main@75b00d8e1cd903d3d727a2628134a27fd740fc42`.
+[Observación READ_ONLY #1237](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44300816017)
+SUCCESS a las ~09:07 ART: controller HEALTHY, worker CREATED/PID0, estado
+físico STOPPED, último recibo stop/APPLIED/cause NONE; no certifica la razón
+del fallo histórico ni navegación. Nunca usar ese stop posterior como
+diagnóstico del intento fallido de las 08:55 ART.
+
+**QA de Tincho:** Motor A sigue mostrando FAILED, etapa de arranque sin
+confirmación, 25 contextos solicitados / 0 creados, sin intento de URL
+acreditado ni evidencia verificable de evento/cola/token. La interfaz G16
+omite el intento de navegación del Motor A aunque el contrato ya lo
+contiene, y mezcla mensajes globales de ejecutor con navegación local.
+El RCA READ_ONLY de
+`engine_sessions._await_physical` encontró espera de hasta 30 segundos por
+acuse de START; si falla, termina la activación antes de abrir sesiones.
+**Causa exacta del acuse no confirmada**, no atribuir HTTP/provider/cola ni
+falta de eventos sin evidencia. Código fuente y límites en
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6978660876).
+
+**Candidato único G17, CODE_ONLY:** rama local
+`feature/417-g17-motor-evidence-ux` desde main G16; diseño y plan en
+`docs/superpowers/`. El autor independiente corrige sólo presentación HTML/
+polling y tests, con SSR/JS paritarios: URL saneada configurada por sesión,
+intento/hora/resultado/HTTP real, URL final, estado lógico histórico y error
+priorizado; sin sesión indica “no observado”, sin inventar respuesta externa.
+Registros del worker global plegados y status técnico duplicado reducido.
+Arquitectura halló un helper ausente en el JS de HOME; el autor incorporó
+el módulo existente (sin duplicarlo) y test Node de URL/HTTP/fecha/paridad
+SSR versus polling para ambos motores. Requiere 4GO_FINAL sobre SHA
+definitivo, suite exacta GREEN, PR/CI y QA tablet antes de release nuevo.
+
+**RCA test full, comprobada:** no era un fallo aleatorio ni un problema
+demostrado en navegador real. El test de activación
+`test_automatic_observer_ipc` parcheaba `AutomaticQueueObserver=Factory`
+antes de que `_run_server` importara por primera vez `engine_sessions`.
+El alias de clase quedaba capturado en ese segundo módulo tras finalizar el
+test y hacía que el pool posterior devolviera 50 `NO_GO` con 0 launches.
+QA reprodujo el par mínimo RED y verificó la diferencia entre alias real y
+Factory en PDB. Nuevo consenso 4/4 PRE_CODE en
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6979033163)
+autorizó únicamente el arreglo del test contaminante; commit `a242e12`
+preimporta el módulo antes del monkeypatch, usa contexto acotado y comprueba
+la restauración de identidad. El par contaminante pasó en **ambos órdenes**
+tras el arreglo; QA confirmó esa evidencia independientemente. **No afirmar
+aún full GREEN** hasta corrida serial completa en el SHA final. Nada de
+`engine_sessions`, pool de producción, worker, IPC, CI ni host cambió.
+
+**PR0:** después de 4 opiniones técnicas favorables, #544–#549 Dependabot
+fueron cerrados uno a uno sin merge ni borrar ramas; decisiones por PR en
+[issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6978536405)
+y resultado en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6978556903).
+No se disparó nueva Action, build ni reemplazo de G16 por esa limpieza.
+
+**Pendientes reales posteriores:** correlación read-only del START fallido
+con ledger host; comprobación visual Samsung del nuevo candidato; Telegram
+directo/configuración y `Ingresar`/passkey señalados por el titular;
+pruebas de motores/colas/tokens/navegación por socio **sin reservas reales**;
+GO operativo, recepción física y certificación BETA. Root conserva ownership
+y aplica sólo GitHub Actions Boca al droplet; Porota fuera de alcance.
+Las secciones siguientes son checkpoints anteriores, no estado vigente.
+
 ## G6 — excepción de publisher, no desplegada (2026-11-16 ART)
 
 Release869/run43922790822 falló en el primer push browser con `unknown blob`;

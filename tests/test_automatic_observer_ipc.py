@@ -190,7 +190,10 @@ def test_default_worker_cannot_use_site_configuration_as_automatic_permission(mo
 
 
 def test_automatic_worker_activation_is_explicit_and_inert_until_owner_command(monkeypatch):
-    from boca_socios.browser import automatic_observer
+    from boca_socios.browser import automatic_observer, engine_sessions
+
+    real_observer = automatic_observer.AutomaticQueueObserver
+    assert engine_sessions.AutomaticQueueObserver is real_observer
 
     configured = []
 
@@ -202,16 +205,19 @@ def test_automatic_worker_activation_is_explicit_and_inert_until_owner_command(m
         assert isinstance(self._queue_observer, Factory)
         assert self._site_observer is None and self._fixture_only is False
 
-    monkeypatch.setattr(
-        ipc_server, "_read_worker_site_url", lambda: "https://owner.example.invalid/"
-    )
-    monkeypatch.setattr(automatic_observer, "AutomaticQueueObserver", Factory)
-    monkeypatch.setattr(ipc_server.UnixSyntheticWorker, "serve_until", serve)
-    monkeypatch.setenv("BOCA_BROWSER_EXECUTOR", "automatic-observation")
-    monkeypatch.setenv("BOCA_RUNTIME_MODE", "simulation")
-    monkeypatch.setenv("BOCA_BROWSER_OBSERVE_MODE", "off")
-    asyncio.run(ipc_server._run_server())
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            ipc_server, "_read_worker_site_url", lambda: "https://owner.example.invalid/"
+        )
+        scoped.setattr(automatic_observer, "AutomaticQueueObserver", Factory)
+        scoped.setattr(ipc_server.UnixSyntheticWorker, "serve_until", serve)
+        scoped.setenv("BOCA_BROWSER_EXECUTOR", "automatic-observation")
+        scoped.setenv("BOCA_RUNTIME_MODE", "simulation")
+        scoped.setenv("BOCA_BROWSER_OBSERVE_MODE", "off")
+        asyncio.run(ipc_server._run_server())
     assert configured == ["https://owner.example.invalid/"]
+    assert automatic_observer.AutomaticQueueObserver is real_observer
+    assert engine_sessions.AutomaticQueueObserver is real_observer
 
 
 def test_received_page_reaches_private_global_monitor_through_both_ipc_adapters(monkeypatch):
