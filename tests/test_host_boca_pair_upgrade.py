@@ -9,6 +9,7 @@ import pytest
 
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_pair_upgrade as pair
+from boca_socios import host_boca_pair_upgrade_cli as cli
 
 
 @pytest.fixture(autouse=True)
@@ -360,10 +361,62 @@ def test_factory_exception_has_durable_indeterminate_terminal_without_compensati
     assert (result.state, result.cleanup, result.failed_phase) == (
         "NO_GO",
         "INDETERMINATE",
-        "ATTEST",
+        "ATTEST_FACTORY",
     )
     assert not result.old_restored and not result.commit_started and not result.accepted
     assert result.controller_id is None and result.worker_id is None
+
+
+def test_factory_refusal_and_backend_attest_failure_have_distinct_terminal_bytes() -> None:
+    plan = _coordinates()
+    host = Backend(failure="attest", cleanup="INDETERMINATE")
+
+    def run(fail_factory: bool) -> tuple[pair.PairUpgradeReceipt, bytes]:
+        events: list[str] = []
+        terminals: list[bytes] = []
+
+        def factory(coordinates: pair.PairCoordinates, lease: cleanup.BocaJobLease) -> Backend:
+            cleanup.verify_protected_boca_job_lease(lease, coordinates.attempt_id)
+            events.append("factory")
+            if fail_factory:
+                raise RuntimeError("injected private factory detail")
+            return host
+
+        def terminal(
+            coordinates: pair.PairCoordinates,
+            receipt: pair.PairUpgradeReceipt,
+            lease: cleanup.BocaJobLease,
+        ) -> None:
+            cleanup.verify_protected_boca_job_lease(lease, coordinates.attempt_id)
+            events.append("terminal")
+            terminals.append(cli.encode_upgrade(receipt))
+
+        result = pair.run_pair_upgrade(
+            plan,
+            backend_factory=factory,
+            terminal_preflight=lambda *_: events.append("intent"),
+            commit_marker=lambda *_: pytest.fail("commit after pre-stage failure"),
+            terminal_sink=terminal,
+        )
+        assert events == ["intent", "factory", "terminal"]
+        assert len(terminals) == 1
+        assert (result.state, result.cleanup) == ("NO_GO", "INDETERMINATE")
+        assert not result.old_restored and not result.commit_started and not result.accepted
+        assert result.controller_id is None and result.worker_id is None
+        assert cli.verify_upgrade(terminals[0], plan.attempt_id) == terminals[0]
+        return result, terminals[0]
+
+    factory_refusal, factory_raw = run(fail_factory=True)
+    assert host.events == []
+    attest_failure, attest_raw = run(fail_factory=False)
+    assert host.events == ["attest", "finalize"]
+    assert factory_raw != attest_raw
+    assert factory_refusal.failed_phase == "ATTEST_FACTORY"
+    assert attest_failure.failed_phase == "ATTEST"
+    assert factory_raw == attest_raw.replace(
+        b'"failed_phase":"ATTEST"', b'"failed_phase":"ATTEST_FACTORY"'
+    )
+    assert b"injected private factory detail" not in factory_raw
 
 
 def test_factory_returning_unapproved_backend_never_reaches_its_methods() -> None:
@@ -384,7 +437,13 @@ def test_factory_returning_unapproved_backend_never_reaches_its_methods() -> Non
     )
     assert events == ["intent", "terminal-NO_GO"]
     assert disabled.events == []
-    assert not result.accepted and result.cleanup == "INDETERMINATE"
+    assert (result.state, result.cleanup, result.failed_phase) == (
+        "NO_GO",
+        "INDETERMINATE",
+        "ATTEST_FACTORY",
+    )
+    assert not result.old_restored and not result.commit_started and not result.accepted
+    assert result.controller_id is None and result.worker_id is None
 
 
 @pytest.mark.parametrize("invalid", ["missing", "both", "uncallable"])

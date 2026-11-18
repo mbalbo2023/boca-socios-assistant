@@ -1,6 +1,6 @@
 # Estado de integración BETA
 
-## Último checkpoint: G18 NO instalado; lectura #1255 cerrada — 18-Nov-2026 ART
+## Último checkpoint: G18 NO instalado; D1/D2 verificados — 18-Nov-2026 ART
 
 **Handoff operativo vigente:** [G18 18-Nov](HANDOFF_G18_2026-11-18.md)
 y [ledger #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
@@ -9,23 +9,19 @@ observación #1255 fueron completados. Las secciones inferiores son históricas.
 
 | Etapa | Evidencia verificada | Situación |
 | --- | --- | --- |
-| G17 físicamente retenido | Fuente `7f20bf0acf43b2e17812bfc35efc86a552b5a404`, [P #1252](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44353903240) y [C #1253](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44354524641) READ_ONLY SUCCESS | Controller HEALTHY, `8443` loopback; worker `CREATED/PID0`; identidad de recursos, inodes y binding retenidos. No acredita navegación. |
+| D1 — G17 físicamente instalado | Fuente `7f20bf0acf43b2e17812bfc35efc86a552b5a404`, [lectura #1257](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44413009975) | Controller `HEALTHY`, motor `STOPPED`, worker `CREATED/PID0`; ledger `NOT_BOUND_TO_CURRENT_INSTALLATION`. No acredita navegación ni explica #1251. |
 | G18 integrado | [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552) MERGED, `main@dbd3f1c494c341c980625da3660e10cc28fa8446`; CI #1327, Playwright sintético #1326, Security #1109 PASS | Mejora de jerarquía `/control/actividad` en código; no prueba funcionamiento real. |
 | Release G18 | [#876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224) SUCCESS, par controller/browser publicado | Imagen publicada, **no** equivale a instalado. No repetir build/release. |
 | Único intento de instalar G18 | [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452) FAILED | `failed_phase=ATTEST`, `commit_started=false`, `cleanup=INDETERMINATE`, sin IDs sucesores. **No repetir APPLY**; causa exclusiva aún UNKNOWN. |
 | Diagnóstico #1251 cerrado hasta donde permite el recibo | [PR #553](https://github.com/mbalbo2023/boca-socios-assistant/pull/553) MERGED `main@8c3edd972c4be77ebae5be40a54ccff6c3202b30` (HEAD antes de esta documentación), [CI main](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365020955) 3/3 PASS, [Security](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365020817) 3/3 PASS, [único READ_ONLY #1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614) SUCCESS | Marcadores auténticos `evidence,intent,terminal`, sin `commit` ni `technical-postflight-v2`; `NO_GO/ATTEST`, `observer_writes=0`, **causa exclusiva UNPROVEN**. Ya NO está CODE_ONLY ni pendiente de ejecutar; **no repetir**. |
 
-**Conclusión:** BETA **NO_GO**. El sistema que sigue físicamente en el
-droplet es G17; la mejora de UX G18 permanece sólo en `main`/GHCR. El fallo
-#1251 corresponde a una de dos rutas posibles — fallo de constructor/factory
-o de `backend.attest` antes de STAGE — **sin prueba discriminatoria**. Los
-marcadores sí existen; no inferir del resultado cuál guard rechazó.
-El [ledger/RCA/ownership canónico #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
-concentra evidencia y gates; no crear otra rama de motor, reescribir tests
-cubiertos ni inventar otros bloqueantes. El siguiente gate es comparar de
-manera offline los predicados concretos contra recibos P/C y release;
-cualquier observación adicional exige aprobación independiente 4GO y sólo
-GitHub Actions Boca. Nunca repetir #1251 ni #1255.
+**Conclusión:** G18 sigue sin desplegar; BETA **NO_GO**. D2 reprodujo bytes
+idénticos para un fallo de factory y uno de `backend.attest`; #1251 sigue
+`ATTEST_ROUTE_UNDETERMINED`, causa exclusiva `UNPROVEN`. El
+[4GO_PRE_CODE](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6993940940)
+autoriza sólo un candidato de observabilidad futura (`ATTEST_FACTORY`, mismo
+schema 1), no otro observador, publicación, deploy ni retry. Nunca repetir
+#1251, #1255 ni #1257. Los próximos gates están en el handoff canónico.
 
 **Funcionalidad por certificar — reutilizar fuentes existentes:**
 `automatic_observer`, `engine_sessions`, `queue_page_observation`,
