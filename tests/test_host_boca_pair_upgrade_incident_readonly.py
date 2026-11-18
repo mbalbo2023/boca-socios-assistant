@@ -399,3 +399,223 @@ def test_isolated_runner_verifies_actual_framed_terminal_without_site_packages(
     )
     assert bad.returncode == 3
     assert b"FRAME_UNVERIFIED" in bad.stdout
+
+
+# G18 #1251 is a distinct historical PRECOMMIT failure.  The same bounded
+# stage reader and terminal CLI must serve it without changing #1241 semantics.
+ATTEMPT_1251 = "44352430452"
+OLD_1251 = NEW
+NEW_1251 = "dbd3f1c494c341c980625da3660e10cc28fa8446"
+RELEASE_1251 = "44348462224"
+PREFIX_1251 = ".boca-pair-upgrade-44352430452."
+
+
+def _precommit_1251_markers() -> dict[str, bytes]:
+    original = _markers("NO_GO")
+    evidence = json.loads(original["evidence"])
+    plan = evidence["plan"]
+    release = evidence["release"]
+    witness = evidence["witness"]
+    plan.update(
+        attempt_id=ATTEMPT_1251,
+        old_source_sha=OLD_1251,
+        new_source_sha=NEW_1251,
+        release_run_id=RELEASE_1251,
+    )
+    release.update(source_sha=NEW_1251, release_run_id=RELEASE_1251)
+    witness["old_source_sha"] = OLD_1251
+    witness["retained"] = {
+        "ipc_creator_attempt": "43920000001",
+        "ipc_inode_sha256": "8" * 64,
+        "site_creator_attempt": "43920000002",
+        "site_inode_sha256": "9" * 64,
+        "egress_creator_attempt": "43920000003",
+        "egress_id": "a" * 64,
+    }
+    raw_evidence = _canonical(evidence)
+    intent = json.loads(original["intent"])
+    intent.update(
+        attempt=ATTEMPT_1251,
+        evidence_sha256=hashlib.sha256(raw_evidence).hexdigest(),
+        old_source=OLD_1251,
+        new_source=NEW_1251,
+        release=RELEASE_1251,
+    )
+    terminal = {
+        "schema": 1,
+        "attempt_id": ATTEMPT_1251,
+        "state": "NO_GO",
+        "cleanup": "INDETERMINATE",
+        "old_restored": False,
+        "commit_started": False,
+        "controller_id": None,
+        "worker_id": None,
+        "failed_phase": "ATTEST",
+    }
+    return {
+        "evidence": raw_evidence,
+        "intent": _canonical(intent),
+        "terminal": b"BOCA_PAIR_UPGRADE " + _canonical(terminal) + b"\n",
+        "commit": hashlib.sha256(_canonical(intent)).hexdigest().encode("ascii"),
+        "technical-postflight-v2": original["technical-postflight-v2"],
+    }
+
+
+def _write_1251(directory: Path, markers: dict[str, bytes]) -> None:
+    for suffix, content in markers.items():
+        target = directory / f"{PREFIX_1251}{suffix}"
+        target.write_bytes(content)
+        target.chmod(0o600)
+
+
+@pytest.mark.parametrize(
+    ("present", "state", "reason"),
+    [
+        ((), "UNKNOWN", "NO_MARKERS"),
+        (("evidence",), "PRECOMMIT_EVIDENCE_ONLY", "EVIDENCE_ONLY"),
+        (("evidence", "intent"), "PRECOMMIT_INTENT_ONLY", "INTENT_NO_TERMINAL"),
+        (
+            ("evidence", "intent", "terminal"),
+            "PRECOMMIT_TERMINAL_NO_GO",
+            "CANONICAL_ATTEST_NO_GO",
+        ),
+    ],
+)
+def test_1251_coherent_precommit_markers_use_same_canonical_verifier(
+    boca_dir: Path, present: tuple[str, ...], state: str, reason: str
+) -> None:
+    markers = _precommit_1251_markers()
+    _write_1251(boca_dir, {key: markers[key] for key in present})
+    private = forensic.observe_private_1251(RUN)
+    result = forensic.verify_private_1251(private, RUN)
+    assert f"state={state} reason={reason}" in result
+    assert "observer_writes=0" in result and "recovery_authorized=false" in result
+    assert "beta_deploy=NO_GO" in result
+    assert b"BOCA_PAIR_UPGRADE " not in result.encode()
+    assert OLD_CONTROLLER not in result
+    assert NEW_CONTROLLER not in result
+
+
+@pytest.mark.parametrize(
+    "selected",
+    [
+        {"terminal"},
+        {"intent"},
+        {"evidence", "terminal"},
+        {"evidence", "intent", "commit"},
+        {"evidence", "intent", "terminal", "commit"},
+        {"evidence", "intent", "terminal", "technical-postflight-v2"},
+        {"evidence", "intent", "terminal", "commit", "technical-postflight-v2"},
+    ],
+)
+def test_1251_partial_out_of_order_or_postcommit_markers_never_certify_precommit(
+    boca_dir: Path, selected: set[str]
+) -> None:
+    markers = _precommit_1251_markers()
+    _write_1251(boca_dir, {key: markers[key] for key in selected})
+    result = forensic.verify_private_1251(forensic.observe_private_1251(RUN), RUN)
+    assert "state=UNKNOWN" in result or "state=NO_GO" in result
+    assert "PRECOMMIT_TERMINAL_NO_GO" not in result
+
+
+@pytest.mark.parametrize("fault", ["hash", "coordinate", "terminal", "mode", "symlink"])
+def test_1251_invalid_chain_and_marker_identity_rejected(boca_dir: Path, fault: str) -> None:
+    markers = _precommit_1251_markers()
+    selected = {key: markers[key] for key in ("evidence", "intent", "terminal")}
+    if fault == "hash":
+        selected["intent"] = selected["intent"].replace(
+            b'"evidence_sha256":"', b'"evidence_sha256":"0', 1
+        )
+    elif fault == "coordinate":
+        selected["intent"] = selected["intent"].replace(NEW_1251.encode(), b"f" * 40)
+    elif fault == "terminal":
+        selected["terminal"] = selected["terminal"].replace(
+            b'"commit_started":false', b'"commit_started":true'
+        )
+    _write_1251(boca_dir, selected)
+    target = boca_dir / f"{PREFIX_1251}intent"
+    if fault == "mode":
+        target.chmod(0o644)
+    elif fault == "symlink":
+        target.unlink()
+        target.symlink_to(boca_dir / f"{PREFIX_1251}evidence")
+    result = forensic.verify_private_1251(forensic.observe_private_1251(RUN), RUN)
+    assert "state=NO_GO" in result or "state=UNKNOWN" in result
+    assert "state=PRECOMMIT_TERMINAL_NO_GO" not in result
+
+
+def test_1251_private_frame_tampering_and_read_only_invariant(boca_dir: Path) -> None:
+    markers = _precommit_1251_markers()
+    _write_1251(boca_dir, {key: markers[key] for key in ("evidence", "intent", "terminal")})
+    before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in boca_dir.iterdir()}
+    private = forensic.observe_private_1251(RUN)
+    after = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in boca_dir.iterdir()}
+    assert before == after
+    assert b"BOCA_PAIR_UPGRADE " in private
+    for invalid, run in (
+        (private + b"trailing", RUN),
+        (private[:-1] + b"0", RUN),
+        (private[:20], RUN),
+        (private, "44399999999"),
+    ):
+        assert "state=NO_GO" in forensic.verify_private_1251(invalid, run)
+
+
+def test_1251_canonical_terminal_error_is_not_misreported_as_transport_frame(
+    boca_dir: Path,
+) -> None:
+    markers = _precommit_1251_markers()
+    markers["terminal"] = markers["terminal"].replace(b'"schema":1', b'"schema":1,"schema":1', 1)
+    _write_1251(boca_dir, {key: markers[key] for key in ("evidence", "intent", "terminal")})
+    result = forensic.verify_private_1251(forensic.observe_private_1251(RUN), RUN)
+    assert "state=NO_GO reason=TERMINAL_UNVERIFIED" in result
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "empty",
+        "missing_key",
+        "extra_key",
+        "bool_run",
+        "bad_run",
+        "bool_hash",
+        "bad_hash",
+        "wrong_type",
+    ],
+)
+def test_1251_retained_pins_must_match_actual_producer_contract(boca_dir: Path, fault: str) -> None:
+    markers = _precommit_1251_markers()
+    evidence = json.loads(markers["evidence"])
+    retained = evidence["witness"]["retained"]
+    assert set(retained) == {
+        "ipc_creator_attempt",
+        "ipc_inode_sha256",
+        "site_creator_attempt",
+        "site_inode_sha256",
+        "egress_creator_attempt",
+        "egress_id",
+    }
+    if fault == "empty":
+        retained.clear()
+    elif fault == "missing_key":
+        retained.pop("egress_id")
+    elif fault == "extra_key":
+        retained["unreviewed"] = "x"
+    elif fault == "bool_run":
+        retained["ipc_creator_attempt"] = True
+    elif fault == "bad_run":
+        retained["site_creator_attempt"] = "0"
+    elif fault == "bool_hash":
+        retained["egress_id"] = True
+    elif fault == "bad_hash":
+        retained["site_inode_sha256"] = "z" * 64
+    elif fault == "wrong_type":
+        evidence["witness"]["retained"] = []
+    markers["evidence"] = _canonical(evidence)
+    intent = json.loads(markers["intent"])
+    intent["evidence_sha256"] = hashlib.sha256(markers["evidence"]).hexdigest()
+    markers["intent"] = _canonical(intent)
+    _write_1251(boca_dir, {key: markers[key] for key in ("evidence", "intent")})
+    result = forensic.verify_private_1251(forensic.observe_private_1251(RUN), RUN)
+    assert "state=NO_GO reason=MARKER_UNVERIFIED" in result

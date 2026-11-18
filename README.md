@@ -2,13 +2,21 @@
 
 ## Estado vigente — 18 de noviembre de 2026
 
-G17 está instalado y aceptado técnicamente, **sin certificación BETA**:
-controller saludable y worker detenido en la última lectura física. No
-repetir ese deploy. El único candidato nuevo es G18 **CODE_ONLY**, destinado
-a mostrar primero la actividad actualizada de los motores A/B mediante las
-observaciones ya existentes, intentos de navegación por sesión, URLs,
-evento/cola, errores y acceso a la inspección privada de tokens. No confirma
-login DOM ni entradas; las reservas reales siguen prohibidas en BETA.
+**G17 sigue instalado; G18 está integrado, pero NO instalado ni certificado
+BETA.** G18 PR [#552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
+se integró en `main@dbd3f1c`, pasó CI/Playwright sintético y publicó el par
+GHCR en [release #876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224).
+Su **único APPLY #1251 falló en `ATTEST`**; el posterior par de observaciones
+READ_ONLY Boca #1252/#1253 conservó G17 (controller HEALTHY, worker
+CREATED/PID0). No repetir instalación ni publicación de imágenes.
+
+El trabajo actual es **exclusivamente un diagnóstico CODE_ONLY** de los
+marcadores durables de ese incidente, reutilizando el lector existente y
+reservando cualquier operación física a las Actions Boca después de
+consenso. Siguen sin acreditarse el motor navegando, evento, cola, token,
+login por socio, configuración Telegram, eliminación de «Ingresar» redundante
+ni aceptación visual Samsung. `SIMULATION_ONLY`: nunca realizar reservas
+ni compras reales durante la BETA. Porota y otros servicios fuera de alcance.
 Ver [estado, evidencias y bloqueantes vigentes](docs/BETA_INTEGRATION_STATUS.md)
 y [handoff #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
 

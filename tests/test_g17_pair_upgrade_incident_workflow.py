@@ -53,7 +53,8 @@ def test_selector_has_exact_owner_main_gate_and_private_runner_channel() -> None
     )
     assert options.count(SELECTOR) == 1
     assert f"if: inputs.operation == '{SELECTOR}'" in workflow
-    assert f"{SELECTOR})" in workflow
+    # New #1251 reader shares the same exact owner-only read-only case gate.
+    assert f"{SELECTOR}|boca-pair-upgrade-incident-observe-1251)" in workflow
     assert "github.ref == 'refs/heads/main'" in workflow
     assert "github.actor == 'mbalbo2023'" in workflow
     assert "check_main_ref.py" in workflow

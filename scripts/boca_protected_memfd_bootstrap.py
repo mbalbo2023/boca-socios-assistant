@@ -176,6 +176,18 @@ PAIR_INCIDENT_1241_ENTRIES = frozenset(
 )
 PAIR_INCIDENT_1241_MAX_ZIP = 32_000
 PAIR_INCIDENT_1241_MAX_UNCOMPRESSED = 80_000
+# Both forensic modes contain the exact same four inert entries; bind their
+# entrypoint bytes to the selected operation so a #1241 ZIP cannot run as #1251.
+PAIR_INCIDENT_ENTRY_MAIN = {
+    label: (
+        "import sys\n"
+        f"if len(sys.argv) != 3 or sys.argv[1] != 'boca-pair-upgrade-incident-observe-{label}':\n"
+        "    raise SystemExit(3)\n"
+        "from boca_socios.host_boca_pair_upgrade_incident_readonly import main\n"
+        f"raise SystemExit(main(['host{'-1251' if label == '1251' else ''}',sys.argv[2]]))\n"
+    ).encode("ascii")
+    for label in ("1241", "1251")
+}
 TELEGRAM_INITIALIZER_ENTRIES = TELEGRAM_INCIDENT_ENTRIES | {
     "boca_socios/host_telegram_initializer_recovery.py",
 }
@@ -408,6 +420,7 @@ def verify(
     telegram_incident_observe: bool = False,
     telegram_initializer_recover: bool = False,
     pair_upgrade_incident_observe_1241: bool = False,
+    pair_upgrade_incident_observe_1251: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
     if (
@@ -434,6 +447,7 @@ def verify(
                 telegram_incident_observe,
                 telegram_initializer_recover,
                 pair_upgrade_incident_observe_1241,
+                pair_upgrade_incident_observe_1251,
             )
         )
         > 1
@@ -441,7 +455,7 @@ def verify(
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
         PAIR_INCIDENT_1241_MAX_ZIP
-        if pair_upgrade_incident_observe_1241
+        if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
         else TELEGRAM_INITIALIZER_MAX_ZIP
         if telegram_initializer_recover
         else TELEGRAM_INCIDENT_MAX_ZIP
@@ -482,7 +496,7 @@ def verify(
     )
     max_uncompressed = (
         PAIR_INCIDENT_1241_MAX_UNCOMPRESSED
-        if pair_upgrade_incident_observe_1241
+        if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
         else TELEGRAM_INITIALIZER_MAX_UNCOMPRESSED
         if telegram_initializer_recover
         else TELEGRAM_INCIDENT_MAX_UNCOMPRESSED
@@ -530,7 +544,7 @@ def verify(
         names = [entry.filename for entry in entries]
         allowlisted = (
             (PAIR_INCIDENT_1241_ENTRIES,)
-            if pair_upgrade_incident_observe_1241
+            if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
             else (TELEGRAM_INITIALIZER_ENTRIES,)
             if telegram_initializer_recover
             else (TELEGRAM_INCIDENT_ENTRIES,)
@@ -580,6 +594,12 @@ def verify(
             or sum(entry.file_size for entry in entries) > max_uncompressed
         ):
             raise ValueError("protected Boca bundle entry allowlist mismatch")
+        if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251:
+            expected = PAIR_INCIDENT_ENTRY_MAIN[
+                "1241" if pair_upgrade_incident_observe_1241 else "1251"
+            ]
+            if package.read("__main__.py") != expected:
+                raise ValueError("protected Boca incident entrypoint mismatch")
         if (pair_upgrade or rootless_mapped_observe) and sum(
             entry.file_size for entry in entries
         ) > len(raw) * (
@@ -618,6 +638,9 @@ def main() -> int:
         telegram_incident_observe = sys.argv[2] == "boca-telegram-incident-observe"
         pair_upgrade_incident_observe_1241 = (
             sys.argv[2] == "boca-pair-upgrade-incident-observe-1241"
+        )
+        pair_upgrade_incident_observe_1251 = (
+            sys.argv[2] == "boca-pair-upgrade-incident-observe-1251"
         )
         telegram_initializer_recover = sys.argv[2] == "boca-telegram-initializer-recover"
         telegram_installed = sys.argv[2] in {
@@ -664,7 +687,7 @@ def main() -> int:
             or re.fullmatch(r"[a-f0-9]{40}", sys.argv[4]) is None
         ):
             raise ValueError("incident observer requires exact observation run and workflow SHA")
-        if pair_upgrade_incident_observe_1241 and (
+        if (pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251) and (
             len(sys.argv) != 4 or re.fullmatch(r"[1-9][0-9]{0,19}", sys.argv[3]) is None
         ):
             raise ValueError("G17 incident reader accepts one observation run ID only")
@@ -725,7 +748,7 @@ def main() -> int:
             raise ValueError("precommit recovery requires only fresh authenticated run ID")
         bound = (
             PAIR_INCIDENT_1241_MAX_ZIP
-            if pair_upgrade_incident_observe_1241
+            if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
             else TELEGRAM_INITIALIZER_MAX_ZIP
             if telegram_initializer_recover
             else TELEGRAM_INCIDENT_MAX_ZIP
@@ -789,6 +812,7 @@ def main() -> int:
             telegram_incident_observe=telegram_incident_observe,
             telegram_initializer_recover=telegram_initializer_recover,
             pair_upgrade_incident_observe_1241=pair_upgrade_incident_observe_1241,
+            pair_upgrade_incident_observe_1251=pair_upgrade_incident_observe_1251,
         )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.

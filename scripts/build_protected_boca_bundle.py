@@ -242,8 +242,16 @@ PAIR_INCIDENT_1241_MAIN = (
     "from boca_socios.host_boca_pair_upgrade_incident_readonly import main\n"
     "raise SystemExit(main(['host',sys.argv[2]]))\n"
 ).encode("ascii")
+PAIR_INCIDENT_1251_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'boca-pair-upgrade-incident-observe-1251':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_pair_upgrade_incident_readonly import main\n"
+    "raise SystemExit(main(['host-1251',sys.argv[2]]))\n"
+).encode("ascii")
 PAIR_INCIDENT_1241_MAX_SOURCE_BYTES = 80_000
 PAIR_INCIDENT_1241_MAX_ARCHIVE_BYTES = 32_000
+PAIR_INCIDENT_READER_MAX_BYTES = 36_000
 TELEGRAM_INITIALIZER_SOURCES = (
     *TELEGRAM_INCIDENT_SOURCES,
     "src/boca_socios/host_telegram_initializer_recovery.py",
@@ -615,6 +623,7 @@ def build(
     telegram_incident_observe: bool = False,
     telegram_initializer_recover: bool = False,
     pair_upgrade_incident_observe_1241: bool = False,
+    pair_upgrade_incident_observe_1251: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
     if (
@@ -640,6 +649,7 @@ def build(
                 telegram_incident_observe,
                 telegram_initializer_recover,
                 pair_upgrade_incident_observe_1241,
+                pair_upgrade_incident_observe_1251,
             )
         )
         > 1
@@ -651,13 +661,19 @@ def build(
     # avoids mypy no-redef errors from annotations repeated in each branch.
     files: dict[str, bytes]
     sources: tuple[str, ...]
-    if pair_upgrade_incident_observe_1241:
-        files = {"__main__.py": PAIR_INCIDENT_1241_MAIN}
+    if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251:
+        files = {
+            "__main__.py": (
+                PAIR_INCIDENT_1241_MAIN
+                if pair_upgrade_incident_observe_1241
+                else PAIR_INCIDENT_1251_MAIN
+            )
+        }
         sources = PAIR_INCIDENT_1241_SOURCES
         max_source = PAIR_INCIDENT_1241_MAX_SOURCE_BYTES
         max_archive = PAIR_INCIDENT_1241_MAX_ARCHIVE_BYTES
-        if (root / PAIR_INCIDENT_1241_SOURCES[-1]).stat().st_size > 24_000:
-            raise ValueError("G17 incident reader exceeds standalone source bound")
+        if (root / PAIR_INCIDENT_1241_SOURCES[-1]).stat().st_size > PAIR_INCIDENT_READER_MAX_BYTES:
+            raise ValueError("Boca incident reader exceeds standalone source bound")
     elif telegram_initializer_recover:
         files = {"__main__.py": TELEGRAM_INITIALIZER_MAIN, **HOST_ONLY_INIT}
         sources = TELEGRAM_INITIALIZER_SOURCES
@@ -904,6 +920,7 @@ def build(
             telegram_incident_observe,
             telegram_initializer_recover,
             pair_upgrade_incident_observe_1241,
+            pair_upgrade_incident_observe_1251,
         )
     )
     for rel in sources:
@@ -1015,6 +1032,7 @@ def main() -> int:
     variant.add_argument("--public-recipient-metadata-observe", action="store_true")
     variant.add_argument("--telegram-incident-observe", action="store_true")
     variant.add_argument("--pair-upgrade-incident-observe-1241", action="store_true")
+    variant.add_argument("--pair-upgrade-incident-observe-1251", action="store_true")
     variant.add_argument("--telegram-initializer-recover", action="store_true")
     variant.add_argument("--sqlite-observe", action="store_true")
     variant.add_argument("--pair-upgrade", action="store_true")
@@ -1027,7 +1045,7 @@ def main() -> int:
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, current_retained_observe=args.current_retained_observe, installed_admin=args.installed_admin, binding_observe=args.binding_observe, public_recipient_metadata_observe=args.public_recipient_metadata_observe, telegram_incident_observe=args.telegram_incident_observe, telegram_initializer_recover=args.telegram_initializer_recover, pair_upgrade_incident_observe_1241=args.pair_upgrade_incident_observe_1241, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize, precommit_restore=args.precommit_restore)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, current_retained_observe=args.current_retained_observe, installed_admin=args.installed_admin, binding_observe=args.binding_observe, public_recipient_metadata_observe=args.public_recipient_metadata_observe, telegram_incident_observe=args.telegram_incident_observe, telegram_initializer_recover=args.telegram_initializer_recover, pair_upgrade_incident_observe_1241=args.pair_upgrade_incident_observe_1241, pair_upgrade_incident_observe_1251=args.pair_upgrade_incident_observe_1251, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize, precommit_restore=args.precommit_restore)}"
     )
     return 0
 

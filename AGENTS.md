@@ -1,36 +1,46 @@
 # Binding instructions for every coding agent
 
-## Checkpoint VIGENTE G18 — 2026-11-18 ART (CODE_ONLY / NO_BETA_CERT)
+## Checkpoint VIGENTE G18 — 2026-11-18 ART (INCIDENTE #1251 / BETA NO_GO)
 
-**No repetir lo ya instalado:** G17 producto `7f20bf0` fue aceptado
-técnicamente en el droplet Boca; observaciones READ_ONLY Actions Boca
-#1242–#1244 encontraron controller HEALTHY, `8443` privado y worker
-CREATED/PID0 en ese instante. [Observación histórica #1246](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44330362333)
-SUCCESS/HISTORICAL_TERMINAL_ACCEPTED no acredita navegación del motor,
-URL visitada, evento, cola, token, login ni reserva real. El main más
-reciente `b905ecac90050f0f2d8ff0c483f5864bcc7c856c` agrega diagnóstico
-READ_ONLY #551; no es otro deploy ni demuestra funcionalidad BETA.
+**Producto instalado y preservado: G17**, fuente
+`7f20bf0acf43b2e17812bfc35efc86a552b5a404`. Luego del intento G18,
+las Actions Boca READ_ONLY [#1252](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44353903240)
+y [#1253](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44354524641)
+confirmaron el mismo controller HEALTHY en `127.0.0.1:8443` y worker
+CREATED/PID0, con identidad de binding, inodes y recursos retenidos estables.
+Son fotografías físicas, no acreditan actividad viva del motor, URL visitada,
+evento, cola, token, login DOM ni reserva.
 
-**Único candidato actual G18, NO desplegado:** rama
-`feature/417-g18-activity-priority` sobre ese main, con autor de código
-separado de Root. Corrige sólo UX de `/control/actividad`: reaprovecha las
-tarjetas A/B, la proyección/sondeo de `GET /control/motores.json`, hace
-visible último intento de navegación `sequence` 1–3 **por sesión** y socio
-de la activación B, y mantiene los tokens/URLs completos únicamente en la
-inspección privada existente. Registro global y sesiones técnicas quedan
-plegados sin duplicar canales ni endpoints. La [adenda y inventario](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6982927447),
-[consenso PRE_CODE 4/4](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6983036738)
-y [evidencia local](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6983420923)
-están en el issue canónico #417. G18 no permite confirmar salud física
-actual del worker, login DOM ni entrada/reserva; `SIMULATION_ONLY`.
+**G18 está integrado y publicado, NO instalado:** PR [#552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
+MERGED en `main@dbd3f1c494c341c980625da3660e10cc28fa8446`;
+CI #1327 y Playwright sintético offline #1326 PASS; release dual
+[#876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224)
+SUCCESS. UX G18 pone motores A/B primero en Actividad, reutilizando
+`GET /control/motores.json`, polling existente y la inspección privada;
+no agrega worker, motor, canal de tokens o reservas. El único protected
+APPLY G18 [#1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452)
+**FAILED**, `failed_phase=ATTEST`, `commit_started=false`,
+`cleanup=INDETERMINATE`, sin IDs sucesores. **No repetir #1251, release ni
+build; tampoco asumir causa física exclusiva.**
 
-**Pendiente:** 4GO_FINAL independiente sobre SHA definitivo, PR único,
-CI/Playwright **sólo GitHub Actions de Boca**, integración y eventual
-despliegue con nuevo GO_OPERATION, luego QA privado Samsung. No ejecutar
-Chromium local/interno contra la aplicación ni navegar Boca/Queue-it en QA.
-Todos los efectos en droplet por Actions Boca; Porota y otros servicios
-intocables. README y `docs/BETA_INTEGRATION_STATUS.md` registran estado actual;
-los checkpoints inferiores son **históricos** y no autorizan repetirlos.
+**Trabajo actual limitado CODE_ONLY:** rama
+`feature/417-g18-1251-incident-readonly` reutiliza el observador forense
+#1241 para los cinco marcadores durables fijos de #1251, el ZIP privado y
+la Action protegida. Autor separado acreditó 10.461 pytest PASS, 1 SKIP
+AF_UNIX por entorno, mypy/Ruff/política PASS. La revisión 4GO_FINAL,
+PR/CI y autorización independiente de UNA observación READ_ONLY aún
+se deben acreditar; **ningún despacho nuevo al droplet está autorizado por
+el código solo**. `NO_MARKERS` significa `UNKNOWN`, no diagnóstico exclusivo.
+Consolidar toda decisión y recibo en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+
+**Pendientes funcionales:** visibilidad compacta y veraz en tiempo real de
+ambos motores, URL/HTTP/intentos/evento/cola/token y copia privada de enlace;
+login y navegación por socio acreditados, Telegram directo, eliminar el
+ingreso redundante con passkey, QA real Samsung y certificación BETA.
+`SIMULATION_ONLY`; **ninguna reserva real**. Toda operación de host
+exclusivamente mediante GitHub Actions Boca, nunca navegador interno contra
+el servicio privado; Porota, otros puertos, contenedores y proyectos intocables.
+Los checkpoints inferiores son **históricos**, no instrucciones vigentes.
 
 ## Histórico: checkpoint G17 — 2026-11-18 ART (corte previo / CODE_ONLY)
 
