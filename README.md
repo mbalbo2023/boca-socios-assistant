@@ -2,23 +2,30 @@
 
 ## Estado vigente — 18 de noviembre de 2026
 
-**G17 sigue instalado; G18 está integrado, pero NO instalado ni certificado
-BETA.** G18 PR [#552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
-se integró en `main@dbd3f1c`, pasó CI/Playwright sintético y publicó el par
-GHCR en [release #876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224).
-Su **único APPLY #1251 falló en `ATTEST`**; el posterior par de observaciones
-READ_ONLY Boca #1252/#1253 conservó G17 (controller HEALTHY, worker
-CREATED/PID0). No repetir instalación ni publicación de imágenes.
+**G17 sigue físicamente instalado; G18 está integrado, pero NO desplegado ni
+certificado BETA.** G18 UX [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
+MERGED y [release #876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224)
+SUCCESS (no repetir). El único [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452)
+FAILED `ATTEST` antes del commit; [P #1252](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44353903240)
+y [C #1253](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44354524641)
+conservaron controller G17 HEALTHY y worker CREATED/PID0.
 
-El trabajo actual es **exclusivamente un diagnóstico CODE_ONLY** de los
-marcadores durables de ese incidente, reutilizando el lector existente y
-reservando cualquier operación física a las Actions Boca después de
-consenso. Siguen sin acreditarse el motor navegando, evento, cola, token,
-login por socio, configuración Telegram, eliminación de «Ingresar» redundante
-ni aceptación visual Samsung. `SIMULATION_ONLY`: nunca realizar reservas
-ni compras reales durante la BETA. Porota y otros servicios fuera de alcance.
-Ver [estado, evidencias y bloqueantes vigentes](docs/BETA_INTEGRATION_STATUS.md)
-y [handoff #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+**El diagnóstico forense ya se integró y ejecutó una vez**: [PR #553](https://github.com/mbalbo2023/boca-socios-assistant/pull/553)
+MERGED en `8c3edd972c4be77ebae5be40a54ccff6c3202b30`; CI/security
+3/3 PASS y única [Action #1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614)
+READ_ONLY SUCCESS. Halló evidencia, intención y recibo `NO_GO/ATTEST` sin
+commit ni postflight: **no discrimina** entre fallo de factory y de attest.
+No repetir #1251/#1255 ni afirmar RCA específico sin evidencia.
+
+Ya existen rutas para URL/HTTP/intentos, colas/eventos, tokens copiables,
+polling 5 s y Telegram directo; no duplicarlas. Falta instalación física G18,
+prueba de actividad del worker/navegación/DOM, habilitación Telegram, UX
+Samsung y decisión focal sobre «Ingresar»/passkey. `SIMULATION_ONLY`: no
+reservas ni compras reales. Porota y servicios ajenos fuera de alcance.
+**Próximo agente:** leer primero el
+[handoff detallado G18](docs/HANDOFF_G18_2026-11-18.md), el
+[estado BETA](docs/BETA_INTEGRATION_STATUS.md) y el
+[ledger #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
 
 ## Histórico: cierre técnico antes de la prueba integral
 
