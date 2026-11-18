@@ -1,5 +1,54 @@
 # Binding instructions for every coding agent
 
+## Checkpoint vigente G17 — 2026-11-18 ART (CODE_ONLY / NO_BETA_CERT)
+
+Fuente físicamente aceptada y **no repetir**: G16
+`main@75b00d8e1cd903d3d727a2628134a27fd740fc42`, release874,
+upgrade protegido #1228 ACCEPTED y postflight #1230 SUCCESS. La nueva
+observación READ_ONLY [Action #1237](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44300816017)
+mostró controller HEALTHY, worker CREATED/PID0, motor físico STOPPED y
+STOP/APPLIED/cause NONE. Ese estado posterior **no explica** por sí mismo el
+FAILED de Motor A capturado por el titular a las 08:55 ART.
+
+En [issue #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
+constan la captura QA, el RCA de código y el consenso 4/4 PRE_CODE para G17.
+El coordinador puede cerrar con `WORKER_RECEIPT_UNVERIFIED` tras esperar
+30 segundos un acuse de inicio y salir ANTES de abrir sesiones; 25 contextos
+solicitados / 0 creados no acreditan URL navegada, evento, cola ni tokens.
+La causa física concreta de ese acuse faltante permanece UNKNOWN. Registros
+del ejecutor global no prueban navegación particular del motor.
+
+Rama local aislada `feature/417-g17-motor-evidence-ux`: único autor distinto
+de Root modifica `engine_view.py` y `test_engine_live_status_ui.py` para
+mostrar evidencia de navegación disponible, prioridad del error, estado
+lógico versus actividad física no comprobada, y plegar registros globales.
+Arquitectura detectó y el autor subsanó el sondeo HOME con los helpers JS
+existentes; prueba Node cubre ambos motores y URL/HTTP/fecha saneados.
+Un 4/4 PRE_CODE **adicional y limitado a pruebas** quedó en
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6979033163):
+`tests/test_automatic_observer_ipc.py` importaba `engine_sessions` por primera
+vez **durante** un monkeypatch temporal de `AutomaticQueueObserver`, y su
+alias persistente contaminaba la prueba posterior de 50 contextos (50 NO_GO).
+El commit local `a242e12` preimporta antes del patch, lo acota y verifica
+restauración; pareja RED reproducible antes, GREEN en ambos órdenes después.
+No se modificó código productivo del pool, worker o IPC; no era una prueba
+del fallo operativo del droplet. La suite serial completa sobre SHA final
+queda pendiente de certificación independiente por QA.
+El [diseño](docs/superpowers/specs/2026-11-18-g17-motor-evidence-ux-design.md)
+y [plan](docs/superpowers/plans/2026-11-18-g17-motor-evidence-ux.md)
+mantienen CODE_ONLY: sin PR/build/release/host hasta revisión independiente,
+suite exigida y nuevo consenso 4/4 GO_FINAL. No extender a worker, IPC,
+Telegram, autenticación ni eliminación de passkey sin RCA y consenso nuevos.
+
+Higiene PR0: Arquitectura, QA, Operaciones y Root revisaron individualmente
+los 6 Dependabot #544–#549; fueron comentados y cerrados **sin merge**, ramas
+e historial conservados, con ledger en [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
+y #417. Cinco tenían CI FAIL, Ruff #549 estaba GREEN pero era mantenimiento
+diferible. Reconciliar cualquier PR nuevo antes del futuro release.
+SIMULATION_ONLY, sin reservas reales, Porota intocable y operaciones físicas
+exclusivamente por GitHub Actions de Boca. Telegram, `/ingresar`, QA Samsung
+y certificación BETA todavía no se consideran concluidos.
+
 ## G6 — excepción de publisher, no desplegada (2026-11-16 ART)
 
 La release869/run43922790822 falló en el primer push del browser con
