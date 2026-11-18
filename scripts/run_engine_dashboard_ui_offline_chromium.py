@@ -1362,6 +1362,10 @@ async def _viewport(
         await _submit(page, POST_ORDER[3])
         step = "members_stopped_refresh"
         await _refresh(page)
+        # Layout proof left the technical controls collapsed for the screenshot.
+        await summary.click()
+        if await technical.get_attribute("open") is None:
+            raise RuntimeError("accessible_layout_unverified")
         await _refresh(activity)
         await activity.wait_for_function(
             "() => document.getElementById('engines-total-active').textContent === '0'"

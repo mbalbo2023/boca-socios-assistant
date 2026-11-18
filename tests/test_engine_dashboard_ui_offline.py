@@ -353,6 +353,21 @@ process.stdout.write(JSON.stringify(results));
     ]
 
 
+def test_final_activity_refresh_reopens_collapsed_technical_controls():
+    """The last offline click must expose the refresh button before using it."""
+    module = _module()
+    source = inspect.getsource(module._viewport)
+    assert 'technical = activity.locator("#engines-global-technical")' in source
+    after_stop = source.split('step = "members_stopped_refresh"', 1)[1].split(
+        'step = "members_stopped_poll"', 1
+    )[0]
+    assert (
+        after_stop.index("await _refresh(page)")
+        < after_stop.index("await summary.click()")
+        < after_stop.index("await _refresh(activity)")
+    )
+
+
 @pytest.mark.parametrize("body_fails", [False, True])
 def test_refresh_waits_for_body_without_orphaned_finished_task(body_fails):
     module = _module()
