@@ -1,40 +1,32 @@
 # Estado de integración BETA
 
-## Último checkpoint: G18 Actividad — candidato CODE_ONLY (18-Nov-2026 ART)
+## Último checkpoint: G18 instalado NO; incidente #1251 — 18-Nov-2026 ART
 
-**Instalación vigente G17, no repetir:** fuente de producto
-`7f20bf0` aceptada técnicamente e inspeccionada por las observaciones
-READ_ONLY Boca #1242–#1244: controller HEALTHY, puerto privado 8443,
-worker `CREATED/PID0` en el momento de la lectura. La observación histórica
-[#1246](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44330362333)
-fue SUCCESS (`HISTORICAL_TERMINAL_ACCEPTED`), **sin** certificar actividad de
-navegación, URL real, evento, cola, token, login o reserva. No repetir
-release, APPLY ni observaciones cerradas. El diagnóstico #551 llegó a
-`main@b905ecac90050f0f2d8ff0c483f5864bcc7c856c` y **no** es otro deploy.
+| Etapa | Evidencia verificada | Situación |
+| --- | --- | --- |
+| G17 físicamente retenido | Fuente `7f20bf0acf43b2e17812bfc35efc86a552b5a404`, [P #1252](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44353903240) y [C #1253](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44354524641) READ_ONLY SUCCESS | Controller HEALTHY, `8443` loopback; worker `CREATED/PID0`; identidad de recursos, inodes y binding retenidos. No acredita navegación. |
+| G18 integrado | [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552) MERGED, `main@dbd3f1c494c341c980625da3660e10cc28fa8446`; CI #1327, Playwright sintético #1326, Security #1109 PASS | Mejora de jerarquía `/control/actividad` en código; no prueba funcionamiento real. |
+| Release G18 | [#876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224) SUCCESS, par controller/browser publicado | Imagen publicada, **no** equivale a instalado. No repetir build/release. |
+| Único intento de instalar G18 | [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452) FAILED | `failed_phase=ATTEST`, `commit_started=false`, `cleanup=INDETERMINATE`, sin IDs sucesores. **No repetir APPLY**; causa exclusiva aún UNKNOWN. |
+| Diagnóstico actual | Rama `feature/417-g18-1251-incident-readonly`, commit de autor separado `0ed2802` más reconciliación documental Root; 10.461 pytest PASS, 1 SKIP local AF_UNIX; mypy/Ruff/política PASS | **CODE_ONLY**. Observa cinco marcadores exactos #1251 con lector seguro ya existente; PR, CI, cuatro GO finales sobre SHA definitivo y **UNA** Action READ_ONLY requieren decisión independiente. Ninguna nueva operación física. |
 
-**Defecto UX reproducido:** Playwright sintético offline de CI G17 #1324,
-artefacto `boca-engine-ui-synthetic-b905ecac…`, mostró los registros generales
-antes de los motores en `/control/actividad`, con Motor A/B demasiado abajo.
-Es evidencia de presentación, **no** de funcionamiento del droplet.
+**Conclusión:** BETA **NO_GO**. El sistema que sigue físicamente en el
+droplet es G17; la mejora de UX G18 permanece sólo en `main`/GHCR. El fallo
+#1251 puede corresponder a más de una ruta `ATTEST`. La ausencia eventual
+de marcadores tampoco demostraría una causa exclusiva ni habilitaría retry.
+El [ledger/RCA/ownership canónico #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
+concentra evidencia y gates; no crear otra rama de motor, reescribir tests
+cubiertos ni inventar otros bloqueantes.
 
-**Candidato único G18 CODE_ONLY:** rama local
-`feature/417-g18-activity-priority`, autor separado. Reutiliza
-`engine_view._live_card`, `GET /control/motores.json` y el polling de cinco
-segundos para poner A/B primero, plegar una sola vez diagnóstico global y
-sesiones técnicas, exponer URL configurada/intento/final, HTTP observado,
-evento, cola y acceso a token/URL copiable por inspección privada existente.
-La [adenda QA y auditoría de código](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6982927447)
-y el [4GO previo granular](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6983036738)
-permiten además mostrar el último número `navigation_attempt.sequence` **de
-esa sesión** (1–3) y el socio de la activación B, no un total global. No se
-desarrollan motores, endpoints, workers ni mecanismos de token nuevos.
-
-**G18 todavía NO instalado y BETA NO_CERT:** faltan revisión independiente
-4GO_FINAL, un único PR/CI Playwright en **GitHub Actions de Boca**, gates de
-integración/operación y QA privado Samsung. El motor físico activo, el login
-DOM confirmado y la reserva real no están acreditados por esta proyección;
-`SIMULATION_ONLY` prohíbe reservas/compras reales. #417 retiene RCA,
-ownership y tareas pendientes. Porota y otros servicios siguen fuera de alcance.
+**Funcionalidad por certificar:** pantalla compacta que refleje intentos,
+URL solicitada/final, respuesta HTTP observada, estado del servicio,
+eventos/colas, tokens y enlace privado copiable; navegación/login por socio
+con resultado verificable; configuración directa Telegram; retirar o redirigir
+«Ingresar» con passkey redundante; prueba UX Samsung con control por voz.
+Hay dos motores lógicos sobre un worker físico; polling y registros globales
+no prueban trabajo de ese motor. `SIMULATION_ONLY`, sin compras ni reservas
+reales. Toda operación host sólo por GitHub Actions Boca; no tocar Porota,
+otros servicios, contenedores o puertos.
 
 ## Histórico: G17 Motor A / UX evidenciable (corte anterior, 18-Nov-2026 ART)
 

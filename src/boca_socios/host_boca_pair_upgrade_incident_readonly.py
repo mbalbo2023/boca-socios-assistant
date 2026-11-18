@@ -1,4 +1,4 @@
-"""Forensic READ_ONLY observer for Boca G17 APPLY #1241; NEVER replays APPLY.
+"""Forensic READ_ONLY observer for fixed Boca #1241/#1251; NEVER replays APPLY.
 
 The host ZIP contains only this stdlib module and the existing inert stage
 openat helpers. Its stdout is a PRIVATE binary frame sent through the pinned
@@ -23,7 +23,15 @@ G16_SOURCE = "75b00d8e1cd903d3d727a2628134a27fd740fc42"
 G17_SOURCE = "7f20bf0acf43b2e17812bfc35efc86a552b5a404"
 RELEASE_RUN = "44313076076"
 
+# The original G17 #1241 coordinates remain frozen. G18 #1251 has a
+# separate fixed frame/profile, sharing this *same* inert stage reader.
+INCIDENT_1251 = "44352430452"
+OLD_SOURCE_1251 = G17_SOURCE
+NEW_SOURCE_1251 = "dbd3f1c494c341c980625da3660e10cc28fa8446"
+RELEASE_RUN_1251 = "44348462224"
+
 _PREFIX = f".boca-pair-upgrade-{INCIDENT}."
+_PREFIX_1251 = f".boca-pair-upgrade-{INCIDENT_1251}."
 _LIMITS = {
     "evidence": 4096,
     "intent": 1024,
@@ -32,6 +40,7 @@ _LIMITS = {
     "terminal": 1024,
 }
 _MAGIC = b"BOCA_G17_1241_PRIVATE_V1\x00"
+_MAGIC_1251 = b"BOCA_G18_1251_PRIVATE_V1\x00"
 _TERMINAL_PREFIX = b"BOCA_PAIR_UPGRADE "
 _TECHNICAL_PREFIX = b"BOCA_PAIR_POSTFLIGHT_TECHNICAL_V2 "
 _FRAME_LIMIT = 4096
@@ -83,7 +92,7 @@ def _stable_dir(fd: int, before: os.stat_result) -> None:
         raise _reject("DIRECTORY_DRIFT") from None
 
 
-def _read_snapshot() -> dict[str, tuple[bytes, os.stat_result] | None]:
+def _read_snapshot(prefix: str = _PREFIX) -> dict[str, tuple[bytes, os.stat_result] | None]:
     try:
         fd = stage._root_fd()
     except (OSError, stage.StageError):
@@ -95,7 +104,7 @@ def _read_snapshot() -> dict[str, tuple[bytes, os.stat_result] | None]:
         for _ in range(2):
             seen: dict[str, tuple[bytes, os.stat_result] | None] = {}
             for suffix, limit in _LIMITS.items():
-                name = _PREFIX + suffix
+                name = prefix + suffix
                 try:
                     named_before = os.stat(name, dir_fd=fd, follow_symlinks=False)
                 except FileNotFoundError:
@@ -361,17 +370,362 @@ def _check_markers(values: dict[str, bytes]) -> tuple[str, str]:
     return controller, worker
 
 
-def _frame(metadata: dict[str, object], terminal: bytes = b"") -> bytes:
+def _frame(metadata: dict[str, object], terminal: bytes = b"", *, magic: bytes = _MAGIC) -> bytes:
     raw = _canonical(metadata)
     if len(raw) > 2048 or len(terminal) > 1024:
         raise _reject("FRAME_UNVERIFIED")
-    packet = (
-        _MAGIC + len(raw).to_bytes(2, "big") + len(terminal).to_bytes(2, "big") + raw + terminal
-    )
+    packet = magic + len(raw).to_bytes(2, "big") + len(terminal).to_bytes(2, "big") + raw + terminal
     finished = packet + hashlib.sha256(packet).digest()
     if len(finished) > _FRAME_LIMIT:
         raise _reject("FRAME_UNVERIFIED")
     return finished
+
+
+def _unframe(raw: bytes, observation_run: str, magic: bytes) -> tuple[dict[str, Any], bytes]:
+    """Same bounded private-frame decoder for either immutable incident."""
+    if (
+        type(raw) is not bytes
+        or not 0 < len(raw) <= _FRAME_LIMIT
+        or not raw.startswith(magic)
+        or len(raw) < len(magic) + 4 + 32
+        or _RUN.fullmatch(observation_run) is None
+    ):
+        raise _reject("FRAME_UNVERIFIED")
+    at = len(magic)
+    json_length = int.from_bytes(raw[at : at + 2], "big")
+    terminal_length = int.from_bytes(raw[at + 2 : at + 4], "big")
+    if json_length > 2048 or terminal_length > 1024:
+        raise _reject("FRAME_UNVERIFIED")
+    if (
+        len(raw) != at + 4 + json_length + terminal_length + 32
+        or hashlib.sha256(raw[:-32]).digest() != raw[-32:]
+    ):
+        raise _reject("FRAME_UNVERIFIED")
+    return _json(raw[at + 4 : at + 4 + json_length]), raw[at + 4 + json_length : -32]
+
+
+def _precommit_evidence_1251(raw: bytes) -> dict[str, Any]:
+    """Verify the unchanged successor evidence schema before classifying absence."""
+    evidence = _json(raw)
+    if (
+        set(evidence) != {"version", "plan", "release", "witness"}
+        or evidence.get("version") != "boca-successor-pair-intent-evidence-v1"
+    ):
+        raise _reject()
+    plan, release, witness = evidence.get("plan"), evidence.get("release"), evidence.get("witness")
+    if not isinstance(plan, dict) or not isinstance(release, dict) or not isinstance(witness, dict):
+        raise _reject()
+    if (
+        set(plan)
+        != {
+            "attempt_id",
+            "observation_run_id",
+            "old_attempt_id",
+            "old_source_sha",
+            "old_controller_id",
+            "old_worker_id",
+            "old_controller_image_id",
+            "old_worker_image_id",
+            "new_source_sha",
+            "release_run_id",
+            "controller_ref",
+            "worker_ref",
+        }
+        or set(release)
+        != {
+            "source_sha",
+            "release_run_id",
+            "controller_ref",
+            "worker_ref",
+            "controller_manifest_sha256",
+            "paired_manifest_sha256",
+        }
+        or set(witness)
+        != {
+            "observation_run_id",
+            "old_attempt_id",
+            "old_source_sha",
+            "controller_id",
+            "worker_id",
+            "controller_image_id",
+            "worker_image_id",
+            "control_inode_sha256",
+            "retained",
+        }
+        or (
+            plan.get("attempt_id"),
+            plan.get("old_source_sha"),
+            plan.get("new_source_sha"),
+            plan.get("release_run_id"),
+        )
+        != (INCIDENT_1251, OLD_SOURCE_1251, NEW_SOURCE_1251, RELEASE_RUN_1251)
+        or (
+            release.get("source_sha"),
+            release.get("release_run_id"),
+            release.get("controller_ref"),
+            release.get("worker_ref"),
+        )
+        != (
+            NEW_SOURCE_1251,
+            RELEASE_RUN_1251,
+            plan.get("controller_ref"),
+            plan.get("worker_ref"),
+        )
+        or (
+            witness.get("observation_run_id"),
+            witness.get("old_attempt_id"),
+            witness.get("old_source_sha"),
+            witness.get("controller_id"),
+            witness.get("worker_id"),
+            witness.get("controller_image_id"),
+            witness.get("worker_image_id"),
+        )
+        != (
+            plan.get("observation_run_id"),
+            plan.get("old_attempt_id"),
+            OLD_SOURCE_1251,
+            plan.get("old_controller_id"),
+            plan.get("old_worker_id"),
+            plan.get("old_controller_image_id"),
+            plan.get("old_worker_image_id"),
+        )
+        or not all(
+            _cid(value)
+            for value in (
+                plan.get("old_controller_id"),
+                plan.get("old_worker_id"),
+                witness.get("control_inode_sha256"),
+                release.get("controller_manifest_sha256"),
+                release.get("paired_manifest_sha256"),
+            )
+        )
+        or plan.get("old_controller_id") == plan.get("old_worker_id")
+        or any(
+            type(value) is not str or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None
+            for value in (plan.get("old_controller_image_id"), plan.get("old_worker_image_id"))
+        )
+        or stage.CONTROLLER.fullmatch(str(plan.get("controller_ref"))) is None
+        or stage.WORKER.fullmatch(str(plan.get("worker_ref"))) is None
+        or not _retained_pins_1251_valid(witness.get("retained"))
+        or any(
+            _RUN.fullmatch(str(value)) is None
+            for value in (plan.get("observation_run_id"), plan.get("old_attempt_id"))
+        )
+    ):
+        raise _reject()
+    return plan
+
+
+def _retained_pins_1251_valid(value: object) -> bool:
+    """Match the six literal ResourcePins fields emitted by SuccessorPairJournal."""
+    expected = {
+        "ipc_creator_attempt": _RUN,
+        "ipc_inode_sha256": _CID,
+        "site_creator_attempt": _RUN,
+        "site_inode_sha256": _CID,
+        "egress_creator_attempt": _RUN,
+        "egress_id": _CID,
+    }
+    return (
+        type(value) is dict
+        and set(value) == set(expected)
+        and all(
+            type(value[key]) is str and pattern.fullmatch(value[key]) is not None
+            for key, pattern in expected.items()
+        )
+    )
+
+
+def _precommit_intent_1251(raw: bytes, evidence: bytes, plan: dict[str, Any]) -> None:
+    intent = _json(raw)
+    if (
+        set(intent)
+        != {
+            "attempt",
+            "evidence_sha256",
+            "old_controller",
+            "old_worker",
+            "old_source",
+            "new_source",
+            "release",
+        }
+        or (
+            intent.get("attempt"),
+            intent.get("old_source"),
+            intent.get("new_source"),
+            intent.get("release"),
+        )
+        != (INCIDENT_1251, OLD_SOURCE_1251, NEW_SOURCE_1251, RELEASE_RUN_1251)
+        or intent.get("evidence_sha256") != hashlib.sha256(evidence).hexdigest()
+        or (intent.get("old_controller"), intent.get("old_worker"))
+        != (plan.get("old_controller_id"), plan.get("old_worker_id"))
+    ):
+        raise _reject()
+
+
+def observe_private_1251(observation_run: str) -> bytes:
+    """Host-side #1251 PRECOMMIT classification; output is private binary only."""
+    if _RUN.fullmatch(observation_run) is None or observation_run == INCIDENT_1251:
+        return _frame(
+            {
+                "run": observation_run[:20],
+                "state": "UNKNOWN",
+                "reason": "RUN_UNVERIFIED",
+                "present": [],
+                "sha256": {},
+            },
+            magic=_MAGIC_1251,
+        )
+    try:
+        snapshot = _read_snapshot(_PREFIX_1251)
+        present = sorted(key for key, value in snapshot.items() if value is not None)
+        digests = {
+            key: hashlib.sha256(item[0]).hexdigest()
+            for key, item in snapshot.items()
+            if item is not None
+        }
+        values = {key: item[0] for key, item in snapshot.items() if item is not None}
+        if not present:
+            state, reason = "UNKNOWN", "NO_MARKERS"
+        elif "commit" in values or "technical-postflight-v2" in values:
+            state, reason = "UNKNOWN", "POSTCOMMIT_MARKER_PRESENT"
+        elif "evidence" not in values or "terminal" in values and "intent" not in values:
+            state, reason = "UNKNOWN", "CHAIN_OUT_OF_ORDER"
+        else:
+            plan = _precommit_evidence_1251(values["evidence"])
+            if "intent" not in values:
+                state, reason = "PRECOMMIT_EVIDENCE_ONLY", "EVIDENCE_ONLY"
+            else:
+                _precommit_intent_1251(values["intent"], values["evidence"], plan)
+                if "terminal" not in values:
+                    state, reason = "PRECOMMIT_INTENT_ONLY", "INTENT_NO_TERMINAL"
+                elif (
+                    not values["terminal"].startswith(_TERMINAL_PREFIX)
+                    or not values["terminal"].endswith(b"\n")
+                    or values["terminal"].count(b"\n") != 1
+                ):
+                    raise _reject()
+                else:
+                    # Only runner-side canonical CLI decides terminal semantics.
+                    state, reason = "PRECOMMIT_TERMINAL_PENDING", "VERIFY_ON_RUNNER"
+        return _frame(
+            {
+                "run": observation_run,
+                "state": state,
+                "reason": reason,
+                "present": present,
+                "sha256": digests,
+            },
+            values.get("terminal", b"") if state == "PRECOMMIT_TERMINAL_PENDING" else b"",
+            magic=_MAGIC_1251,
+        )
+    except (IncidentNoGo, OSError, ValueError, TypeError):
+        return _frame(
+            {
+                "run": observation_run,
+                "state": "NO_GO",
+                "reason": "MARKER_UNVERIFIED",
+                "present": [],
+                "sha256": {},
+            },
+            magic=_MAGIC_1251,
+        )
+
+
+def verify_private_1251(raw: bytes, observation_run: str) -> str:
+    """Runner-only #1251 parser delegates terminal validity to canonical CLI."""
+    end = "observer_writes=0 recovery_authorized=false beta_deploy=NO_GO exclusive_cause=UNPROVEN"
+    bad = f"BOCA_G18_INCIDENT_1251_READONLY_V1 state=NO_GO reason=FRAME_UNVERIFIED {end}"
+    try:
+        metadata, terminal = _unframe(raw, observation_run, _MAGIC_1251)
+        state, reason = metadata.get("state"), metadata.get("reason")
+        present, digests = metadata.get("present"), metadata.get("sha256")
+        if (
+            set(metadata) != {"run", "state", "reason", "present", "sha256"}
+            or metadata["run"] != observation_run
+            or type(present) is not list
+            or present != sorted(set(present))
+            or any(key not in _LIMITS for key in present)
+            or type(digests) is not dict
+            or set(digests) != set(present)
+            or any(not _cid(value) for value in digests.values())
+        ):
+            return bad
+        mask = ",".join(present) if present else "NONE"
+        if (
+            state == "UNKNOWN"
+            and reason
+            in (
+                "NO_MARKERS",
+                "POSTCOMMIT_MARKER_PRESENT",
+                "CHAIN_OUT_OF_ORDER",
+                "RUN_UNVERIFIED",
+            )
+            and not terminal
+        ):
+            if reason == "NO_MARKERS" and present:
+                return bad
+            if reason == "POSTCOMMIT_MARKER_PRESENT" and not (
+                "commit" in present or "technical-postflight-v2" in present
+            ):
+                return bad
+            if reason == "CHAIN_OUT_OF_ORDER" and (
+                "evidence" in present and ("terminal" not in present or "intent" in present)
+            ):
+                return bad
+            return f"BOCA_G18_INCIDENT_1251_READONLY_V1 state=UNKNOWN reason={reason} markers={mask} {end}"
+        if state == "NO_GO" and reason == "MARKER_UNVERIFIED" and not terminal and not present:
+            return f"BOCA_G18_INCIDENT_1251_READONLY_V1 state=NO_GO reason={reason} markers={mask} {end}"
+        if (
+            state == "PRECOMMIT_EVIDENCE_ONLY"
+            and reason == "EVIDENCE_ONLY"
+            and present == ["evidence"]
+            and not terminal
+        ):
+            return f"BOCA_G18_INCIDENT_1251_READONLY_V1 state={state} reason={reason} markers={mask} {end}"
+        if (
+            state == "PRECOMMIT_INTENT_ONLY"
+            and reason == "INTENT_NO_TERMINAL"
+            and present == ["evidence", "intent"]
+            and not terminal
+        ):
+            return f"BOCA_G18_INCIDENT_1251_READONLY_V1 state={state} reason={reason} markers={mask} {end}"
+        if (
+            state != "PRECOMMIT_TERMINAL_PENDING"
+            or reason != "VERIFY_ON_RUNNER"
+            or present != ["evidence", "intent", "terminal"]
+            or not terminal
+            or digests.get("terminal") != hashlib.sha256(terminal).hexdigest()
+        ):
+            return bad
+        # Import the production CLI only in the full GitHub runner checkout,
+        # never the four-entry inert ZIP on the Boca host.
+        from boca_socios.host_boca_pair_upgrade_cli import verify_upgrade
+
+        try:
+            verify_upgrade(terminal, INCIDENT_1251)
+        except ValueError:
+            return (
+                "BOCA_G18_INCIDENT_1251_READONLY_V1 state=NO_GO "
+                f"reason=TERMINAL_UNVERIFIED markers={mask} {end}"
+            )
+        result = json.loads(terminal.removeprefix(_TERMINAL_PREFIX))
+        if (
+            result.get("state") != "NO_GO"
+            or result.get("failed_phase") != "ATTEST"
+            or result.get("cleanup") != "INDETERMINATE"
+            or result.get("commit_started") is not False
+            or result.get("old_restored") is not False
+            or result.get("controller_id") is not None
+            or result.get("worker_id") is not None
+        ):
+            return f"BOCA_G18_INCIDENT_1251_READONLY_V1 state=NO_GO reason=TERMINAL_JOURNAL_CONTRADICTION markers={mask} {end}"
+        return (
+            "BOCA_G18_INCIDENT_1251_READONLY_V1 state=PRECOMMIT_TERMINAL_NO_GO "
+            f"reason=CANONICAL_ATTEST_NO_GO markers={mask} terminal_sha256={digests['terminal']} {end}"
+        )
+    except (IncidentNoGo, OSError, ValueError, KeyError, TypeError, ImportError):
+        return bad
 
 
 def observe_private(observation_run: str) -> bytes:
@@ -435,24 +789,7 @@ def verify_private(raw: bytes, observation_run: str) -> str:
     end = "observer_writes=0 recovery_authorized=false beta_deploy=NO_GO external_pair_correlation=PENDING_MANUAL_REVIEW"
     bad = f"BOCA_G17_INCIDENT_READONLY_V1 state=NO_GO reason=FRAME_UNVERIFIED {end}"
     try:
-        if (
-            type(raw) is not bytes
-            or not 0 < len(raw) <= _FRAME_LIMIT
-            or not raw.startswith(_MAGIC)
-            or len(raw) < len(_MAGIC) + 4 + 32
-            or _RUN.fullmatch(observation_run) is None
-        ):
-            return bad
-        at = len(_MAGIC)
-        json_length = int.from_bytes(raw[at : at + 2], "big")
-        terminal_length = int.from_bytes(raw[at + 2 : at + 4], "big")
-        if json_length > 2048 or terminal_length > 1024:
-            return bad
-        expected_length = at + 4 + json_length + terminal_length + 32
-        if len(raw) != expected_length or hashlib.sha256(raw[:-32]).digest() != raw[-32:]:
-            return bad
-        metadata = _json(raw[at + 4 : at + 4 + json_length])
-        terminal = raw[at + 4 + json_length : -32]
+        metadata, terminal = _unframe(raw, observation_run, _MAGIC)
         state, reason, present, digests = (
             metadata.get("state"),
             metadata.get("reason"),
@@ -530,10 +867,17 @@ def main(argv: list[str] | None = None) -> int:
         frame = observe_private(arguments[1])
         sys.stdout.buffer.write(frame)
         return 0
+    if len(arguments) == 2 and arguments[0] == "host-1251":
+        sys.stdout.buffer.write(observe_private_1251(arguments[1]))
+        return 0
     if len(arguments) == 2 and arguments[0] == "verify":
         result = verify_private(sys.stdin.buffer.read(_FRAME_LIMIT + 1), arguments[1])
         sys.stdout.write(result + "\n")
         return 0 if "state=HISTORICAL_TERMINAL_" in result else 3
+    if len(arguments) == 2 and arguments[0] == "verify-1251":
+        result = verify_private_1251(sys.stdin.buffer.read(_FRAME_LIMIT + 1), arguments[1])
+        sys.stdout.write(result + "\n")
+        return 0 if "state=PRECOMMIT_TERMINAL_NO_GO" in result else 3
     return 3
 
 
