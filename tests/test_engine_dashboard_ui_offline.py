@@ -307,7 +307,7 @@ const results = expressions.map(expression => {
       throw new Error('unexpected fixed DOM lookup');
     },
     querySelectorAll(selector) {
-      if (selector !== '[data-session-id]' || ![2, 3].includes(count))
+      if (selector !== 'li.engine-session[data-session-id]' || ![2, 3].includes(count))
         throw new Error('unexpected fixed DOM selector');
       return {length: ready ? count : 0};
     }

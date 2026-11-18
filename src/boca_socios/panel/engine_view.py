@@ -699,6 +699,10 @@ _LIVE_PROJECTION_SCRIPT = r"""
       tokens: tokens.join(' · ') || 'Sin tokens ni enlaces comprobados',
       authentication: authentication.join(' · ') || 'Sin observación de autenticación',
       navigation: lastNavigation ? 'Sesión ' + (lastNavigation.index + 1) + ' · ' +
+        (Number.isInteger(lastNavigation.attempt.sequence) &&
+        lastNavigation.attempt.sequence >= 1 && lastNavigation.attempt.sequence <= 3 ?
+          'Último intento de navegación n.º ' + lastNavigation.attempt.sequence +
+          ' de esta sesión · ' : '') +
         navigation(lastNavigation.attempt) + historical(lastNavigation) : 'Sin intento observado',
       error: error || 'Sin bloqueo informado', revealed
     };
@@ -786,8 +790,11 @@ _MOTOR_BODY = (
 _SCRIPT = (
     _ENGINE_CONSTANTS
     + _EVIDENCE_CONSTANTS
+    + _LIVE_CONSTANTS
     + _MOTOR_BODY
-    + "const refreshPage = refreshEngines;\n"
+    + _LIVE_PROJECTION_SCRIPT
+    + "async function refreshPage() { const data = await refreshEngines(); "
+    + "for (const motor of Object.keys(engineNames)) updateMotorCard(motor, data); }\n"
     + _POLL_TRIGGER
 )
 _MOTOR_SCRIPT = (
@@ -1295,6 +1302,11 @@ def _live_projection(item: Mapping[str, object]) -> tuple[dict[str, str], str | 
         index, session = final_url
         history = " (muestra histórica)" if session.get("state") != "ACTIVE" else ""
         final_text = f"Sesión {index}: {_session_value(session, 'display_url')}{history}"
+    sequence_prefix = ""
+    if navigation is not None:
+        sequence = navigation.get("sequence")
+        if type(sequence) is int and 1 <= sequence <= 3:
+            sequence_prefix = f"Último intento de navegación n.º {sequence} de esta sesión · "
     return (
         {
             "state": _STATES.get(state, "Estado desconocido"),
@@ -1314,7 +1326,7 @@ def _live_projection(item: Mapping[str, object]) -> tuple[dict[str, str], str | 
             "tokens": " · ".join(tokens) or "Sin tokens ni enlaces comprobados",
             "authentication": " · ".join(authentication) or "Sin observación de autenticación",
             "navigation": (
-                f"Sesión {navigation_index} · {_navigation(navigation)}"
+                f"Sesión {navigation_index} · {sequence_prefix}{_navigation(navigation)}"
                 + (" (muestra histórica)" if navigation_historical else "")
                 if navigation is not None
                 else "Sin intento observado"
@@ -1325,7 +1337,13 @@ def _live_projection(item: Mapping[str, object]) -> tuple[dict[str, str], str | 
     )
 
 
-def _live_card(engine: str, snapshot: Mapping[str, object]) -> str:
+def _live_card(
+    engine: str,
+    snapshot: Mapping[str, object],
+    *,
+    include_worker_details: bool = True,
+    heading_id: str | None = None,
+) -> str:
     item = next(
         (item for item in _entries(snapshot.get("engines")) if item.get("engine") == engine),
         {},
@@ -1355,9 +1373,24 @@ def _live_card(engine: str, snapshot: Mapping[str, object]) -> str:
             else {}
         ),
     }
+    worker_details = (
+        f'<details id="{prefix}worker-details"><summary>Registro técnico global del worker '
+        "compartido (no corresponde a navegación del motor)</summary>"
+        "<p>Son registros globales, no navegaciones confirmadas de este motor.</p>"
+        f'<p id="{prefix}worker-status" role="status">Aún no hay actividad verificable.</p>'
+        f'<p id="{prefix}worker-advisory" hidden></p>'
+        f'<ol class="engine-live-records" aria-label="Registros del worker compartido">'
+        + "".join(f'<li id="{prefix}record-{index}" hidden></li>' for index in range(5))
+        + "</ol>"
+        f'<p>Consulta de actividad: <span id="{prefix}worker-time">Sin consultar</span></p>'
+        '<p><a href="/control/actividad">Abrir actividad detallada</a></p></details>'
+        if include_worker_details
+        else ""
+    )
+    heading_attr = f' id="{heading_id}"' if heading_id else ""
     return (
         f'<section class="engine-live-card" id="{prefix}card" aria-label="{label}">'
-        f"<h2>{label}</h2>"
+        f"<h2{heading_attr}>{label}</h2>"
         f'<p aria-live="polite">Último estado lógico registrado: '
         f'<strong id="{prefix}state">{escape(values["state"])}</strong>'
         f' · <span id="{prefix}phase">{escape(values["phase"])}</span></p>'
@@ -1383,16 +1416,28 @@ def _live_card(engine: str, snapshot: Mapping[str, object]) -> str:
         f'<p id="{prefix}motor-status" role="status">'
         + ("Consulta del motor disponible." if item else "Estado del motor sin verificar.")
         + "</p>"
-        f'<details id="{prefix}worker-details"><summary>Registro técnico global del worker '
-        "compartido (no corresponde a navegación del motor)</summary>"
-        "<p>Son registros globales, no navegaciones confirmadas de este motor.</p>"
-        f'<p id="{prefix}worker-status" role="status">Aún no hay actividad verificable.</p>'
-        f'<p id="{prefix}worker-advisory" hidden></p>'
-        f'<ol class="engine-live-records" aria-label="Registros del worker compartido">'
-        + "".join(f'<li id="{prefix}record-{index}" hidden></li>' for index in range(5))
-        + "</ol>"
-        f'<p>Consulta de actividad: <span id="{prefix}worker-time">Sin consultar</span></p>'
-        '<p><a href="/control/actividad">Abrir actividad detallada</a></p></details></section>'
+        + worker_details
+        + "</section>"
+    )
+
+
+def _current_member_line(
+    engine: str, item: Mapping[str, object], members: tuple[MemberView, ...]
+) -> str:
+    if engine != "browsers_members":
+        return ""
+    identifier = _uuid(item.get("member_id"))
+    member = next((member for member in members if member.member_id == identifier), None)
+    label = (
+        (member.display_name or "Socio local") + " · " + member.masked_email
+        if member is not None
+        else "Socio no disponible en la lista actual"
+        if identifier
+        else "Sin socio asociado"
+    )
+    return (
+        f'<p>Socio de esta activación: <span id="{engine}-current-member" '
+        f'data-member-id="{identifier or ""}">{escape(label)}</span></p>'
     )
 
 
@@ -1407,7 +1452,10 @@ def _section(
     controls: bool = True,
     summary: bool = False,
     compact_controls: bool = False,
+    heading_id: str | None = None,
+    show_current_member: bool = True,
 ) -> str:
+    resolved_heading_id = heading_id or f"{engine}-heading"
     state = escape(_STATES.get(str(item.get("state")), "Estado desconocido"))
     metrics = "".join(
         f'<dt>{label}</dt><dd id="{engine}-{name}">{_number(item.get(name))}</dd>'
@@ -1422,24 +1470,10 @@ def _section(
         and value.strip()
         and value != "UNKNOWN"
     }
-    current_member = ""
-    if engine == "browsers_members":
-        identifier = _uuid(item.get("member_id"))
-        member = next((member for member in members if member.member_id == identifier), None)
-        label = (
-            (member.display_name or "Socio local") + " · " + member.masked_email
-            if member is not None
-            else "Socio no disponible en la lista actual"
-            if identifier
-            else "Sin socio asociado"
-        )
-        current_member = (
-            f'<p>Socio de esta activación: <span id="{engine}-current-member" '
-            f'data-member-id="{identifier or ""}">{escape(label)}</span></p>'
-        )
+    current_member = _current_member_line(engine, item, members) if show_current_member else ""
     return (
-        f'<section data-engine="{engine}" aria-labelledby="{engine}-heading">'
-        f'<h2 id="{engine}-heading">'
+        f'<section data-engine="{engine}" aria-labelledby="{resolved_heading_id}">'
+        f'<h2 id="{resolved_heading_id}">'
         + (
             f"Acciones del motor {'A' if engine == 'queues_tokens' else 'B'}"
             if compact_controls
@@ -1524,11 +1558,9 @@ def activity_content(snapshot: Mapping[str, object], members: tuple[MemberView, 
             else "Sin dato"
         )
         totals.append(f'{label}: <span id="engines-total-{field}">{total}</span>')
-    content = (
-        '<p><a href="#queues_tokens-heading">Actividad del motor A</a> · '
-        '<a href="#browsers_members-heading">Actividad del motor B</a></p>'
-        "<details><summary>Datos técnicos de los motores</summary>"
-        "<p>Dos motores lógicos comparten un worker físico. Estos estados no certifican "
+    technical = (
+        '<details id="engines-global-technical"><summary>Datos técnicos de los motores</summary>'
+        + "<p>Dos motores lógicos comparten un worker físico. Estos estados no certifican "
         "por sí solos la salud de Docker. SIMULATION_ONLY; sin reservas reales.</p>"
         '<p>Límite conjunto de solicitudes: <span id="engines-limit">'
         + _number(snapshot.get("context_limit", 50))
@@ -1540,20 +1572,43 @@ def activity_content(snapshot: Mapping[str, object], members: tuple[MemberView, 
         "URL configurada no acredita navegación.</p>"
         + "<h2>Totales observados</h2><p>"
         + " · ".join(totals)
-        + "</p></details>"
+        + "</p>"
         + _poll_status(snapshot)
+        + "</details>"
     )
-    content += "<h2>Sesiones observadas</h2>" + f"<p>{_SAMPLE_NOTICE}</p>"
-    content += (
+    content = (
+        '<p><a href="#queues_tokens-heading">Actividad del motor A</a> · '
+        '<a href="#browsers_members-heading">Actividad del motor B</a></p>'
         '<div class="activity-motors">'
         + "".join(
             "<div>"
-            + _section(name, item, "", {}, members, False, controls=False)
+            + _live_card(
+                name,
+                snapshot,
+                include_worker_details=False,
+                heading_id=f"{name}-heading",
+            )
+            + _current_member_line(name, item, members)
+            + f'<details class="activity-motor-details" id="{name}-advanced">'
+            + f"<summary>Sesiones y métricas del motor {'A' if name == 'queues_tokens' else 'B'}</summary>"
+            + f"<p>{_SAMPLE_NOTICE}</p>"
+            + _section(
+                name,
+                item,
+                "",
+                {},
+                members,
+                False,
+                controls=False,
+                heading_id=f"{name}-technical-heading",
+                show_current_member=False,
+            )
             + _history(name, item)
-            + "</div>"
+            + "</details></div>"
             for name, item in engines.items()
         )
         + "</div>"
+        + technical
     )
     return content
 

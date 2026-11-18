@@ -100,9 +100,11 @@ def test_activity_requires_owner_passkey_permission_and_same_origin(tmp_path: Pa
 
 def test_activity_combines_both_engines_without_minting_operations(tmp_path, monkeypatch):
     import base64
+    import collections
     import hashlib
     import re
 
+    from test_engine_view import Page
     from test_private_engine_controls import panel
 
     app, engines, cookie = panel(tmp_path, monkeypatch)
@@ -115,7 +117,41 @@ def test_activity_combines_both_engines_without_minting_operations(tmp_path, mon
         assert b'id="' + engine + b'-state"' in body
         assert b'id="' + engine + b'-sessions"' in body
     assert body.count(b'id="worker-events"') == 1
-    assert body.index(b'id="worker-events"') < body.index(b'id="queues_tokens-state"')
+    assert (
+        body.index(b'id="queues_tokens-live-card"')
+        < body.index(b'id="browsers_members-live-card"')
+        < body.index(b'id="worker-events"')
+    )
+    parsed = Page(body)
+    ids = [attrs["id"] for _, attrs in parsed.elements if attrs.get("id")]
+    assert not [key for key, count in collections.Counter(ids).items() if count > 1]
+    for engine in ("queues_tokens", "browsers_members"):
+        assert f"{engine}-heading" not in parsed.ancestors[f"{engine}-live-card"]
+        heading = next(
+            attrs
+            for tag, attrs in parsed.elements
+            if tag == "h2" and attrs.get("id") == f"{engine}-heading"
+        )
+        assert heading.get("hidden") is None
+        assert "details" not in parsed.ancestors[f"{engine}-heading"]
+        assert "details" in parsed.ancestors[f"{engine}-sessions"]
+        technical = next(
+            attrs
+            for tag, attrs in parsed.elements
+            if tag == "section" and attrs.get("data-engine") == engine
+        )
+        assert technical["aria-labelledby"] == f"{engine}-technical-heading"
+        assert f"{engine}-technical-heading" in ids
+        assert body.count(f'id="{engine}-live-worker-details"'.encode()) == 0
+    worker_details = next(
+        attrs
+        for tag, attrs in parsed.elements
+        if tag == "details" and attrs.get("id") == "worker-global-details"
+    )
+    assert "open" not in worker_details
+    assert "details" in parsed.ancestors["worker-events"]
+    assert "details" in parsed.ancestors["worker-activity-refresh"]
+    assert "details" in parsed.ancestors["worker-activity-toggle"]
     for name in (b"queues_tokens", b"browsers_members"):
         assert b'href="#' + name + b'-heading"' in body
     assert b"/control/motores.json" in body and b"/control/actividad.json" in body
@@ -126,6 +162,56 @@ def test_activity_combines_both_engines_without_minting_operations(tmp_path, mon
             assert f"'sha256-{digest}'" in headers["Content-Security-Policy"]
     assert "unsafe-inline" not in headers["Content-Security-Policy"]
     assert engines.calls == []
+
+
+def test_activity_failed_motor_receipt_is_visible_without_inventing_navigation_or_tokens():
+    from boca_socios.panel.private_ui import worker_activity
+    from boca_socios.panel.worker_activity import WorkerActivitySnapshot
+    from test_engine_view import Page
+
+    snapshot = {
+        "version": 1,
+        "observed_at": "2026-11-18T11:55:32Z",
+        "context_limit": 50,
+        "engines": [
+            {
+                "engine": engine,
+                "state": "FAILED",
+                "phase": "WORKER_RECEIPT_UNVERIFIED",
+                "updated_at": "2026-11-18T11:49:49Z",
+                "requested_contexts": 25,
+                "created": 0,
+                "active": 0,
+                "closed": 0,
+                "failed": 0,
+                "sessions": [],
+            }
+            for engine in ("queues_tokens", "browsers_members")
+        ],
+    }
+    body = worker_activity(
+        WorkerActivitySnapshot("2026-11-18T11:55:32Z", "fixed_stages_only", "missing", ()),
+        engine_snapshot=snapshot,
+    )
+    page = Page(body)
+    for engine in ("queues_tokens", "browsers_members"):
+        assert "Fall" in page.text[f"{engine}-live-state"]
+        assert "No se confirmó la apertura" in page.text[f"{engine}-live-error"]
+        assert "No disponible en observación" in page.text[f"{engine}-live-configured-url"]
+        assert "Sin intento observado" in page.text[f"{engine}-live-navigation"]
+        assert "Sin URL final observada" in page.text[f"{engine}-live-final-url"]
+        assert "No comprobado" in page.text[f"{engine}-live-event"]
+        assert "No comprobado" in page.text[f"{engine}-live-queue"]
+        assert "Sin tokens ni enlaces comprobados" in page.text[f"{engine}-live-tokens"]
+        assert "No comprobada" in page.text[f"{engine}-live-physical-status"]
+        assert "25 solicitados" in page.text[f"{engine}-live-contexts"]
+    assert "worker" in body.decode().lower()
+    assert all(
+        "HTTP " not in page.text[f"{engine}-live-navigation"]
+        for engine in ("queues_tokens", "browsers_members")
+    )
+    assert b"queueittoken=" not in body
+    assert b"<form" not in body
 
 
 def test_activity_separates_check_time_from_last_actual_worker_event():

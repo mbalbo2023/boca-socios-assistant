@@ -1,6 +1,18 @@
 # Boca Socios Assistant
 
-## Cierre técnico antes de la prueba integral
+## Estado vigente — 18 de noviembre de 2026
+
+G17 está instalado y aceptado técnicamente, **sin certificación BETA**:
+controller saludable y worker detenido en la última lectura física. No
+repetir ese deploy. El único candidato nuevo es G18 **CODE_ONLY**, destinado
+a mostrar primero la actividad actualizada de los motores A/B mediante las
+observaciones ya existentes, intentos de navegación por sesión, URLs,
+evento/cola, errores y acceso a la inspección privada de tokens. No confirma
+login DOM ni entradas; las reservas reales siguen prohibidas en BETA.
+Ver [estado, evidencias y bloqueantes vigentes](docs/BETA_INTEGRATION_STATUS.md)
+y [handoff #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+
+## Histórico: cierre técnico antes de la prueba integral
 
 El [estado vigente y responsables](docs/BETA_INTEGRATION_STATUS.md) distingue
 la instalación aceptada, la observación1170 concluida y el trabajo nuevo.

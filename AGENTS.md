@@ -1,6 +1,38 @@
 # Binding instructions for every coding agent
 
-## Checkpoint vigente G17 — 2026-11-18 ART (CODE_ONLY / NO_BETA_CERT)
+## Checkpoint VIGENTE G18 — 2026-11-18 ART (CODE_ONLY / NO_BETA_CERT)
+
+**No repetir lo ya instalado:** G17 producto `7f20bf0` fue aceptado
+técnicamente en el droplet Boca; observaciones READ_ONLY Actions Boca
+#1242–#1244 encontraron controller HEALTHY, `8443` privado y worker
+CREATED/PID0 en ese instante. [Observación histórica #1246](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44330362333)
+SUCCESS/HISTORICAL_TERMINAL_ACCEPTED no acredita navegación del motor,
+URL visitada, evento, cola, token, login ni reserva real. El main más
+reciente `b905ecac90050f0f2d8ff0c483f5864bcc7c856c` agrega diagnóstico
+READ_ONLY #551; no es otro deploy ni demuestra funcionalidad BETA.
+
+**Único candidato actual G18, NO desplegado:** rama
+`feature/417-g18-activity-priority` sobre ese main, con autor de código
+separado de Root. Corrige sólo UX de `/control/actividad`: reaprovecha las
+tarjetas A/B, la proyección/sondeo de `GET /control/motores.json`, hace
+visible último intento de navegación `sequence` 1–3 **por sesión** y socio
+de la activación B, y mantiene los tokens/URLs completos únicamente en la
+inspección privada existente. Registro global y sesiones técnicas quedan
+plegados sin duplicar canales ni endpoints. La [adenda y inventario](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6982927447),
+[consenso PRE_CODE 4/4](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6983036738)
+y [evidencia local](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6983420923)
+están en el issue canónico #417. G18 no permite confirmar salud física
+actual del worker, login DOM ni entrada/reserva; `SIMULATION_ONLY`.
+
+**Pendiente:** 4GO_FINAL independiente sobre SHA definitivo, PR único,
+CI/Playwright **sólo GitHub Actions de Boca**, integración y eventual
+despliegue con nuevo GO_OPERATION, luego QA privado Samsung. No ejecutar
+Chromium local/interno contra la aplicación ni navegar Boca/Queue-it en QA.
+Todos los efectos en droplet por Actions Boca; Porota y otros servicios
+intocables. README y `docs/BETA_INTEGRATION_STATUS.md` registran estado actual;
+los checkpoints inferiores son **históricos** y no autorizan repetirlos.
+
+## Histórico: checkpoint G17 — 2026-11-18 ART (corte previo / CODE_ONLY)
 
 Fuente físicamente aceptada y **no repetir**: G16
 `main@75b00d8e1cd903d3d727a2628134a27fd740fc42`, release874,

@@ -1,6 +1,42 @@
 # Estado de integración BETA
 
-## Último checkpoint: G17 Motor A / UX evidenciable (18-Nov-2026 ART)
+## Último checkpoint: G18 Actividad — candidato CODE_ONLY (18-Nov-2026 ART)
+
+**Instalación vigente G17, no repetir:** fuente de producto
+`7f20bf0` aceptada técnicamente e inspeccionada por las observaciones
+READ_ONLY Boca #1242–#1244: controller HEALTHY, puerto privado 8443,
+worker `CREATED/PID0` en el momento de la lectura. La observación histórica
+[#1246](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44330362333)
+fue SUCCESS (`HISTORICAL_TERMINAL_ACCEPTED`), **sin** certificar actividad de
+navegación, URL real, evento, cola, token, login o reserva. No repetir
+release, APPLY ni observaciones cerradas. El diagnóstico #551 llegó a
+`main@b905ecac90050f0f2d8ff0c483f5864bcc7c856c` y **no** es otro deploy.
+
+**Defecto UX reproducido:** Playwright sintético offline de CI G17 #1324,
+artefacto `boca-engine-ui-synthetic-b905ecac…`, mostró los registros generales
+antes de los motores en `/control/actividad`, con Motor A/B demasiado abajo.
+Es evidencia de presentación, **no** de funcionamiento del droplet.
+
+**Candidato único G18 CODE_ONLY:** rama local
+`feature/417-g18-activity-priority`, autor separado. Reutiliza
+`engine_view._live_card`, `GET /control/motores.json` y el polling de cinco
+segundos para poner A/B primero, plegar una sola vez diagnóstico global y
+sesiones técnicas, exponer URL configurada/intento/final, HTTP observado,
+evento, cola y acceso a token/URL copiable por inspección privada existente.
+La [adenda QA y auditoría de código](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6982927447)
+y el [4GO previo granular](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6983036738)
+permiten además mostrar el último número `navigation_attempt.sequence` **de
+esa sesión** (1–3) y el socio de la activación B, no un total global. No se
+desarrollan motores, endpoints, workers ni mecanismos de token nuevos.
+
+**G18 todavía NO instalado y BETA NO_CERT:** faltan revisión independiente
+4GO_FINAL, un único PR/CI Playwright en **GitHub Actions de Boca**, gates de
+integración/operación y QA privado Samsung. El motor físico activo, el login
+DOM confirmado y la reserva real no están acreditados por esta proyección;
+`SIMULATION_ONLY` prohíbe reservas/compras reales. #417 retiene RCA,
+ownership y tareas pendientes. Porota y otros servicios siguen fuera de alcance.
+
+## Histórico: G17 Motor A / UX evidenciable (corte anterior, 18-Nov-2026 ART)
 
 **Instalación actual G16 aceptada; no repetir** release874, protected APPLY
 #1228 ACCEPTED y postflight #1230 SUCCESS sobre

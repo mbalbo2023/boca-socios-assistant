@@ -225,6 +225,46 @@ def test_navigation_evidence_shows_safe_url_time_result_and_proven_http_only(eng
 
 
 @pytest.mark.parametrize("engine", [QUEUES, MEMBERS])
+@pytest.mark.parametrize("sequence", [1, 3, 0, 4, True, "2", None])
+def test_navigation_attempt_number_is_only_a_valid_per_session_sequence(engine, sequence):
+    snapshot = _snapshot(
+        engine,
+        state="RUNNING",
+        phase="QUEUE_ACTIVE",
+        created=1,
+        active=1,
+        sessions=[
+            _session(
+                navigation_attempt={
+                    "sequence": sequence,
+                    "purpose": "SITE_URL",
+                    "result": "RETURNED",
+                    "display_url": f"https://example.invalid/path?token={SECRET}",
+                    "started_at": "2026-11-17T17:22:00Z",
+                    "http_status": 200,
+                }
+            )
+        ],
+    )
+    page, body, _ = render(snapshot=snapshot, engine=engine)
+    navigation = page.text[f"{engine}-live-navigation"]
+    if type(sequence) is int and 1 <= sequence <= 3:
+        assert f"Último intento de navegación n.º {sequence} de esta sesión" in navigation
+    else:
+        assert "n.º" not in navigation
+    assert "HTTP 200" in navigation
+    assert SECRET not in body.decode()
+
+    observed = _poll(engine, [{"engine": snapshot, "activity": _activity()}])["results"][0]
+    assert observed["navigation"]["text"] == navigation
+
+    no_session = _snapshot(engine)
+    assert (
+        "n.º" not in render(snapshot=no_session, engine=engine)[0].text[f"{engine}-live-navigation"]
+    )
+
+
+@pytest.mark.parametrize("engine", [QUEUES, MEMBERS])
 def test_closed_session_evidence_is_historical_and_userinfo_is_not_disclosed(engine):
     session = _session(
         state="CLOSED",

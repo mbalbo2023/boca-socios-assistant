@@ -1164,13 +1164,26 @@ async def _viewport(
         await activity.wait_for_function(
             "() => document.getElementById('engines-live').textContent !== 'Último estado disponible.'"
         )
+        step = "activity_priority"
+        if not await activity.evaluate("""() => {
+          const a = document.getElementById('queues_tokens-live-card');
+          const b = document.getElementById('browsers_members-live-card');
+          const global = document.getElementById('worker-global-details');
+          const headings = ['queues_tokens', 'browsers_members'].map(engine =>
+            document.getElementById(engine + '-heading'));
+          return a && b && global && !global.open &&
+            a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING &&
+            b.compareDocumentPosition(global) & Node.DOCUMENT_POSITION_FOLLOWING &&
+            headings.every(node => node && !node.closest('details'));
+        }"""):
+            raise RuntimeError("activity_priority_unverified")
         step = "running_rows"
         await activity.wait_for_function(
-            "() => document.querySelectorAll('[data-session-id]').length === 2"
+            "() => document.querySelectorAll('li.engine-session[data-session-id]').length === 2"
         )
         step = "initial_session"
         original_row = await activity.locator(
-            f'[data-session-id="{_identity(301)}"]'
+            f'li.engine-session[data-session-id="{_identity(301)}"]'
         ).element_handle()
         if original_row is None:
             raise RuntimeError("initial_session_unverified")
@@ -1189,6 +1202,11 @@ async def _viewport(
         await page.locator("#browsers_members-member").select_option(_MEMBERS[0])
         step = "session_disclosure"
         await activity.bring_to_front()
+        for engine in ENGINES:
+            advanced = activity.locator(f"#{engine}-advanced")
+            if await advanced.get_attribute("open") is not None:
+                raise RuntimeError("activity_priority_unverified")
+            await advanced.locator("summary").first.click()
         rows = activity.locator("li.engine-session[data-session-id]")
         active_row = activity.locator(f'li.engine-session[data-session-id="{_identity(301)}"]')
         disclosure = active_row.locator("details")
@@ -1209,7 +1227,8 @@ async def _viewport(
         step = "live_rows_poll"
         await activity.bring_to_front()
         await activity.wait_for_function(
-            "() => document.querySelectorAll('[data-session-id]').length === 3", timeout=7000
+            "() => document.querySelectorAll('li.engine-session[data-session-id]').length === 3",
+            timeout=7000,
         )
         step = "session_preserved"
         if (
@@ -1234,9 +1253,7 @@ async def _viewport(
         ):
             raise RuntimeError("live_snapshot_projection_unverified")
         step = "live_projection"
-        technical = activity.locator("details").filter(
-            has=activity.get_by_text("Datos técnicos de los motores", exact=True)
-        )
+        technical = activity.locator("#engines-global-technical")
         summary = technical.locator("summary")
         if await technical.get_attribute("open") is not None:
             raise RuntimeError("live_snapshot_projection_unverified")
@@ -1308,6 +1325,8 @@ async def _viewport(
         await summary.click()
         if await technical.get_attribute("open") is not None:
             raise RuntimeError("accessible_layout_unverified")
+        for engine in ENGINES:
+            await activity.locator(f"#{engine}-advanced > summary").click()
         for view in (page, activity):
             primary = view.locator('nav[aria-label="Principal"] a')
             if (
