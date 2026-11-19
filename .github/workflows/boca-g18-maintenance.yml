@@ -1,0 +1,202 @@
+name: Boca G18 one-shot maintenance
+run-name: BOCA-G18-INVENTORY-AND-PAUSE-20261119
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/boca-g18-maintenance.yml
+      - scripts/build_protected_boca_bundle.py
+      - scripts/boca_protected_memfd_bootstrap.py
+      - src/boca_socios/host_boca_g18_maintenance.py
+      - tests/test_boca_g18_maintenance.py
+  push:
+    branches: [main]
+    paths: [.github/workflows/boca-g18-maintenance.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boca-g18-maintenance-one-shot
+  cancel-in-progress: false
+
+jobs:
+  offline-validation:
+    if: github.event_name == 'pull_request'
+    name: G18 read-only source and boundary checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout without credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Check Python files without host access
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          python3 -m py_compile src/boca_socios/host_boca_g18_maintenance.py scripts/build_protected_boca_bundle.py scripts/boca_protected_memfd_bootstrap.py tests/test_boca_g18_maintenance.py
+          python3 -m unittest tests.test_boca_g18_maintenance -v
+      - name: Build and verify the isolated SHA-pinned memfd bundle without SSH
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          python3 scripts/build_protected_boca_bundle.py --g18-maintenance . "$RUNNER_TEMP/boca-g18-review.pyz"
+          python3 - "$RUNNER_TEMP/boca-g18-review.pyz" <<'PY'
+          import hashlib
+          import sys
+          from pathlib import Path
+          from scripts import boca_protected_memfd_bootstrap as bootstrap
+          raw = Path(sys.argv[1]).read_bytes()
+          bootstrap.verify(raw, hashlib.sha256(raw).hexdigest(), g18_maintenance=True)
+          print("BOCA_G18_BUNDLE_OFFLINE_PASS host_calls=0 deletes=0")
+          PY
+
+  inventory-and-stop:
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'mbalbo2023/boca-socios-assistant' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.head_commit.message == 'ops(g18): one-shot Boca inventory and shutdown'
+    name: G18 exact-pair inventory then rootless pause
+    environment: boca-first-deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - name: Authenticate one-time main, accepted G18 release and actor before SSH
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$GITHUB_REPOSITORY" = "mbalbo2023/boca-socios-assistant"
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/g18-main.json"
+          jq -e --arg sha "$GITHUB_SHA" '.ref == "refs/heads/main" and .object.sha == $sha' "$RUNNER_TEMP/g18-main.json" >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44437268809" > "$RUNNER_TEMP/g18-accepted.json"
+          jq -e '.status == "completed" and .conclusion == "success" and .head_sha == "afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8" and .run_attempt == 1' "$RUNNER_TEMP/g18-accepted.json" >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" > "$RUNNER_TEMP/g18-open-pr.json"
+          jq -e 'type == "array" and length == 0' "$RUNNER_TEMP/g18-open-pr.json" >/dev/null
+      - name: Checkout exact main without persistent credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify immutable source and SSH boundary
+        env:
+          BOCA_HOST: ${{ vars.BOCA_DEPLOY_HOST }}
+          BOCA_SSH_KEY: ${{ secrets.BOCA_DEPLOY_SSH_KEY }}
+          BOCA_KNOWN_HOSTS: ${{ secrets.BOCA_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          [[ "$BOCA_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$ ]]
+          test -n "$BOCA_SSH_KEY"
+          test -n "$BOCA_KNOWN_HOSTS"
+          mkdir -m 700 "$RUNNER_TEMP/boca-ssh"
+          printf '%s\n' "$BOCA_SSH_KEY" > "$RUNNER_TEMP/boca-ssh/key"
+          printf '%s\n' "$BOCA_KNOWN_HOSTS" > "$RUNNER_TEMP/boca-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/boca-ssh/key" "$RUNNER_TEMP/boca-ssh/known_hosts"
+          {
+            printf 'Host boca-target\n'
+            printf '  HostName %s\n' "$BOCA_HOST"
+            printf '  User boca-deploy\n'
+            printf '  IdentityFile %s/boca-ssh/key\n' "$RUNNER_TEMP"
+            printf '  UserKnownHostsFile %s/boca-ssh/known_hosts\n' "$RUNNER_TEMP"
+            printf '  GlobalKnownHostsFile /dev/null\n'
+            printf '  StrictHostKeyChecking yes\n'
+            printf '  BatchMode yes\n'
+            printf '  IdentitiesOnly yes\n'
+            printf '  IdentityAgent none\n'
+            printf '  PasswordAuthentication no\n'
+            printf '  KbdInteractiveAuthentication no\n'
+            printf '  ClearAllForwardings yes\n'
+            printf '  RequestTTY no\n'
+            printf '  UpdateHostKeys no\n'
+            printf '  ConnectTimeout 10\n'
+            printf '  NumberOfPasswordPrompts 0\n'
+            printf '  ForwardAgent no\n'
+          } > "$RUNNER_TEMP/boca-ssh/config"
+          chmod 600 "$RUNNER_TEMP/boca-ssh/config"
+      - name: Attested G18 inventory first, stop only Boca UID10001 then verify physical receipt
+        id: physical
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          umask 077
+          bundle="$RUNNER_TEMP/boca-g18-maintenance.pyz"
+          python3 scripts/build_protected_boca_bundle.py --g18-maintenance . "$bundle" > /dev/null
+          digest="$(sha256sum "$bundle" | cut -d' ' -f1)"
+          python3 - "$bundle" "$digest" <<'PY'
+          from pathlib import Path
+          import sys
+          from scripts.boca_protected_memfd_bootstrap import verify
+          verify(Path(sys.argv[1]).read_bytes(), sys.argv[2], g18_maintenance=True)
+          PY
+          remote_command="$(python3 - "$digest" "$GITHUB_RUN_ID" "$GITHUB_SHA" <<'PY'
+          import shlex
+          import sys
+          from pathlib import Path
+          bootstrap = Path("scripts/boca_protected_memfd_bootstrap.py").read_text(encoding="utf-8")
+          print(shlex.join(["python3", "-c", bootstrap, sys.argv[1], "boca-g18-maintenance-once", sys.argv[2], sys.argv[3]]))
+          PY
+          )"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/g18-last-main.json"
+          jq -e --arg sha "$GITHUB_SHA" '.object.sha == $sha' "$RUNNER_TEMP/g18-last-main.json" >/dev/null
+          remote_rc=0
+          (
+            ulimit -f 32
+            timeout --signal=TERM --kill-after=10s 300s ssh \
+              -F "$RUNNER_TEMP/boca-ssh/config" \
+              -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+              boca-target "$remote_command" \
+              < "$bundle" > "$RUNNER_TEMP/boca-g18-private.receipt" 2>/dev/null
+          ) || remote_rc=$?
+          verify_rc=0
+          verified="$(python3 -m boca_socios.host_boca_g18_maintenance verify "$GITHUB_RUN_ID" "$GITHUB_SHA" \
+            < "$RUNNER_TEMP/boca-g18-private.receipt" 2>/dev/null)" || verify_rc=$?
+          if [[ "$remote_rc" != 0 || "$verify_rc" != 0 || "$verified" != BOCA_G18_VERIFY\ state=PASS* ]]; then
+            printf 'BOCA_G18_MAINTENANCE state=NO_GO_OR_INDETERMINATE physical_stop=UNVERIFIED no_automatic_retry=true foreign_touched=0\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf '%s\n' "$verified" >> "$GITHUB_STEP_SUMMARY"
+          python3 - "$RUNNER_TEMP/boca-g18-private.receipt" "$RUNNER_TEMP/boca-g18-inventory.json" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          from boca_socios.host_boca_g18_maintenance import PREFIX_INVENTORY
+          receipt = Path(sys.argv[1]).read_text(encoding="ascii").splitlines()
+          inventory = json.loads(receipt[0][len(PREFIX_INVENTORY):])
+          Path(sys.argv[2]).write_text(json.dumps(inventory, sort_keys=True, indent=2) + "\n", encoding="ascii")
+          df = inventory["docker_accounting"]
+          lines = [
+              "## Inventario físico Docker Boca G18 (antes del apagado)",
+              f"- Contenedores: {inventory['containers']}; redes Boca: {inventory['networks']}",
+              f"- Imágenes en daemon rootless: {inventory['image_count']}; OCI no clasificadas: {inventory['unclassified_image_count']}",
+              f"- Imágenes Boca candidatas, SIN borrar: {len(inventory['reclaimable_image_candidates'])}",
+              f"- Volúmenes: {len(inventory['volumes'])}; todos preservados",
+              f"- Bases de datos, solo stat: {inventory['database']}",
+              f"- Staging Boca: {inventory['stage_files']}",
+              f"- Docker system df: {df['system_df_status']} {df['system_df']}",
+              f"- Buildx cache: {df['buildx_status']} {df['buildx']}",
+              f"- Bytes libres staging: {inventory['disk']['stage_free_bytes']}; Docker: {inventory['disk']['docker_free_bytes']}",
+              "- Apagado: Docker rootless y Boca socket INACTIVE_DISABLED, no se borraron datos ni imágenes",
+          ]
+          with Path(sys.argv[3]).open("a", encoding="utf-8") as out:
+              out.write("\n".join(lines) + "\n")
+          PY
+      - name: Publish exact public Boca-only inventory for surgical proposal
+        if: success() && steps.physical.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boca-g18-docker-inventory-${{ github.run_id }}
+          path: ${{ runner.temp }}/boca-g18-inventory.json
+          retention-days: 14
+          if-no-files-found: error
