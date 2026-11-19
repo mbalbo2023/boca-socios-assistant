@@ -3,16 +3,13 @@ run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'c
 
 on:
   pull_request:
-  push:
-    branches: [main]
-    paths: [.github/workflows/boca-first-deploy.yml]
   workflow_dispatch:
     inputs:
       operation:
         description: cutover-a-apply is ONE simulation deploy dispatch; leave all pins and protected_action_context blank. No login/tickets.
         required: true
         type: choice
-        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-egress-readonly, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, worker-diagnose-once, worker-physical-once, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-stage-recover-844, cutover-a-image-retire, cutover-a-observe, cutover-a-census, boca-pair-observe, boca-retained-resource-observe, boca-current-retained-resource-observe, boca-installed-status-observe, boca-installed-admin-provision, boca-postcommit-observe, boca-binding-observe, boca-public-recipient-metadata-observe, boca-telegram-incident-observe, boca-telegram-initializer-recover, boca-sqlite-inode-observe, boca-rootless-mapping-observe, boca-panel-exact-origin-observe, boca-park-incident-observe, boca-precommit-restore-one-shot, boca-postcommit-finalize, boca-pair-upgrade-apply, boca-pair-upgrade-incident-observe-1241, boca-pair-upgrade-incident-observe-1251, cutover-a-worker-inspect, cutover-a-worker-events-r112, cutover-a-worker-recover, cutover-a-worker-recover-807, cutover-a-worker-recover-819, cutover-a-worker-recover-827, cutover-a-worker-recover-834, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, telegram-sender-recover, telegram-renew-stage, telegram-complete-sender, beta-acceptance, telegram-schema-observe, telegram-migrate, telegram-install-direct, telegram-prepare, telegram-install, telegram-verify, telegram-test, telegram-prepare-diagnose, telegram-public-boundary-observe]
+        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-egress-readonly, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, worker-diagnose-once, worker-physical-once, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-stage-recover-844, cutover-a-image-retire, cutover-a-observe, cutover-a-census, boca-pair-observe, boca-retained-resource-observe, boca-current-retained-resource-observe, boca-installed-status-observe, boca-installed-admin-provision, boca-postcommit-observe, boca-binding-observe, boca-public-recipient-metadata-observe, boca-telegram-incident-observe, boca-telegram-initializer-recover, boca-sqlite-inode-observe, boca-rootless-mapping-observe, boca-panel-exact-origin-observe, boca-park-incident-observe, boca-precommit-restore-one-shot, boca-postcommit-finalize, boca-pair-upgrade-apply, boca-pair-upgrade-incident-observe-1241, boca-pair-upgrade-incident-observe-1251, cutover-a-worker-inspect, cutover-a-worker-events-r112, cutover-a-worker-recover, cutover-a-worker-recover-807, cutover-a-worker-recover-819, cutover-a-worker-recover-827, cutover-a-worker-recover-834, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, telegram-sender-recover, telegram-renew-stage, telegram-complete-sender, beta-acceptance, telegram-schema-observe, telegram-migrate, telegram-install-direct, telegram-prepare, telegram-install, telegram-verify, telegram-test, telegram-prepare-diagnose, telegram-public-boundary-observe, boca-g18-maintenance-once]
       source_sha:
         description: REQUIRED cutover-a-worker-preflight - exact current main SHA for the new dual release; Cutover APPLY/PREPARE derives github.sha
         required: false
@@ -172,7 +169,7 @@ jobs:
         run: |
           set -euo pipefail
           uv run python -m unittest discover -s tests -p "test_boca_g18_maintenance.py" -v
-          uv run python scripts/build_protected_boca_bundle.py --g18-maintenance . "$RUNNER_TEMP/boca-g18-review.pyz"
+          python3 scripts/build_protected_boca_bundle.py --g18-maintenance . "$RUNNER_TEMP/boca-g18-review.pyz"
           uv run python - "$RUNNER_TEMP/boca-g18-review.pyz" <<'PY_G18_REVIEW'
           import hashlib
           import sys
@@ -221,10 +218,10 @@ jobs:
       BOCA_INCIDENT_PREPARE_RUN_ID: ${{ inputs.legacy_release_run_id }}
       BOCA_IMAGE_REF: ${{ inputs.image_ref }}
       BOCA_BROWSER_IMAGE_REF: ${{ inputs.browser_image_ref }}
-      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'worker-diagnose-once' || inputs.operation == 'worker-physical-once' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844' || inputs.operation == 'cutover-a-image-retire' || inputs.operation == 'cutover-a-census' || inputs.operation == 'boca-pair-observe' || inputs.operation == 'boca-retained-resource-observe' || inputs.operation == 'boca-current-retained-resource-observe' || inputs.operation == 'boca-installed-status-observe' || inputs.operation == 'boca-installed-admin-provision' || inputs.operation == 'boca-postcommit-observe' || inputs.operation == 'boca-binding-observe' || inputs.operation == 'boca-public-recipient-metadata-observe' || inputs.operation == 'boca-telegram-incident-observe' || inputs.operation == 'boca-telegram-initializer-recover' || inputs.operation == 'boca-sqlite-inode-observe' || inputs.operation == 'boca-rootless-mapping-observe' || inputs.operation == 'boca-panel-exact-origin-observe' || inputs.operation == 'boca-park-incident-observe' || inputs.operation == 'boca-pair-upgrade-incident-observe-1241' || inputs.operation == 'boca-pair-upgrade-incident-observe-1251' || inputs.operation == 'boca-precommit-restore-one-shot' || inputs.operation == 'boca-postcommit-finalize' || inputs.operation == 'cutover-a-worker-inspect' || inputs.operation == 'cutover-a-worker-events-r112' || inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807' || inputs.operation == 'cutover-a-worker-recover-819' || inputs.operation == 'cutover-a-worker-recover-827' || inputs.operation == 'cutover-a-worker-recover-834') && github.sha || inputs.source_sha }}
+      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'boca-g18-maintenance-once' || inputs.operation == 'worker-diagnose-once' || inputs.operation == 'worker-physical-once' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844' || inputs.operation == 'cutover-a-image-retire' || inputs.operation == 'cutover-a-census' || inputs.operation == 'boca-pair-observe' || inputs.operation == 'boca-retained-resource-observe' || inputs.operation == 'boca-current-retained-resource-observe' || inputs.operation == 'boca-installed-status-observe' || inputs.operation == 'boca-installed-admin-provision' || inputs.operation == 'boca-postcommit-observe' || inputs.operation == 'boca-binding-observe' || inputs.operation == 'boca-public-recipient-metadata-observe' || inputs.operation == 'boca-telegram-incident-observe' || inputs.operation == 'boca-telegram-initializer-recover' || inputs.operation == 'boca-sqlite-inode-observe' || inputs.operation == 'boca-rootless-mapping-observe' || inputs.operation == 'boca-panel-exact-origin-observe' || inputs.operation == 'boca-park-incident-observe' || inputs.operation == 'boca-pair-upgrade-incident-observe-1241' || inputs.operation == 'boca-pair-upgrade-incident-observe-1251' || inputs.operation == 'boca-precommit-restore-one-shot' || inputs.operation == 'boca-postcommit-finalize' || inputs.operation == 'cutover-a-worker-inspect' || inputs.operation == 'cutover-a-worker-events-r112' || inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807' || inputs.operation == 'cutover-a-worker-recover-819' || inputs.operation == 'cutover-a-worker-recover-827' || inputs.operation == 'cutover-a-worker-recover-834') && github.sha || inputs.source_sha }}
       BOCA_SOURCE_SHA_SUBMITTED: ${{ inputs.source_sha }}
       BOCA_SERVICE: ${{ inputs.service }}
-      BOCA_BUDGET: ${{ (inputs.operation == 'boca-rootless-mapping-observe' || inputs.operation == 'boca-panel-exact-origin-observe' || inputs.operation == 'boca-park-incident-observe' || inputs.operation == 'boca-pair-upgrade-incident-observe-1241' || inputs.operation == 'boca-pair-upgrade-incident-observe-1251' || inputs.operation == 'boca-precommit-restore-one-shot' || inputs.operation == 'boca-postcommit-finalize' || inputs.operation == 'cutover-a-apply' || ((inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-reconcile') && (inputs.protected_action_context == '42742150879' || inputs.protected_action_context == '42750940352'))) && '1.5cpu-1024m-192pids' || inputs.resource_budget }}
+      BOCA_BUDGET: ${{ (inputs.operation == 'boca-g18-maintenance-once' || inputs.operation == 'boca-rootless-mapping-observe' || inputs.operation == 'boca-panel-exact-origin-observe' || inputs.operation == 'boca-park-incident-observe' || inputs.operation == 'boca-pair-upgrade-incident-observe-1241' || inputs.operation == 'boca-pair-upgrade-incident-observe-1251' || inputs.operation == 'boca-precommit-restore-one-shot' || inputs.operation == 'boca-postcommit-finalize' || inputs.operation == 'cutover-a-apply' || ((inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-reconcile') && (inputs.protected_action_context == '42742150879' || inputs.protected_action_context == '42750940352'))) && '1.5cpu-1024m-192pids' || inputs.resource_budget }}
       BOCA_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
       BOCA_OWNER_CAPABILITY_SHA256: ${{ inputs.owner_capability_sha256 }}
       BOCA_FAILED_TELEGRAM_RUN_ID: ${{ inputs.failed_telegram_run_id }}
@@ -352,7 +349,7 @@ jobs:
             [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids || "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]
           elif [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
-          elif [[ "$BOCA_OPERATION" = worker-diagnose-once || "$BOCA_OPERATION" = worker-physical-once || "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-stage-recover-844 || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-census || "$BOCA_OPERATION" = boca-pair-observe || "$BOCA_OPERATION" = boca-retained-resource-observe || "$BOCA_OPERATION" = boca-current-retained-resource-observe || "$BOCA_OPERATION" = boca-installed-status-observe || "$BOCA_OPERATION" = boca-installed-admin-provision || "$BOCA_OPERATION" = boca-postcommit-observe || "$BOCA_OPERATION" = boca-binding-observe || "$BOCA_OPERATION" = boca-public-recipient-metadata-observe || "$BOCA_OPERATION" = boca-telegram-incident-observe || "$BOCA_OPERATION" = boca-telegram-initializer-recover || "$BOCA_OPERATION" = boca-sqlite-inode-observe || "$BOCA_OPERATION" = boca-rootless-mapping-observe || "$BOCA_OPERATION" = boca-panel-exact-origin-observe || "$BOCA_OPERATION" = boca-park-incident-observe || "$BOCA_OPERATION" = boca-pair-upgrade-incident-observe-1241 || "$BOCA_OPERATION" = boca-pair-upgrade-incident-observe-1251 || "$BOCA_OPERATION" = boca-precommit-restore-one-shot || "$BOCA_OPERATION" = boca-postcommit-finalize || "$BOCA_OPERATION" = boca-pair-upgrade-apply || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-events-r112 || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-recover-807 || "$BOCA_OPERATION" = cutover-a-worker-recover-819 || "$BOCA_OPERATION" = cutover-a-worker-recover-827 || "$BOCA_OPERATION" = cutover-a-worker-recover-834 || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-schema-observe || "$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-install-direct || "$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender || "$BOCA_OPERATION" = telegram-prepare-diagnose || "$BOCA_OPERATION" = telegram-public-boundary-observe ]]; then
+          elif [[ "$BOCA_OPERATION" = boca-g18-maintenance-once || "$BOCA_OPERATION" = worker-diagnose-once || "$BOCA_OPERATION" = worker-physical-once || "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-stage-recover-844 || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-census || "$BOCA_OPERATION" = boca-pair-observe || "$BOCA_OPERATION" = boca-retained-resource-observe || "$BOCA_OPERATION" = boca-current-retained-resource-observe || "$BOCA_OPERATION" = boca-installed-status-observe || "$BOCA_OPERATION" = boca-installed-admin-provision || "$BOCA_OPERATION" = boca-postcommit-observe || "$BOCA_OPERATION" = boca-binding-observe || "$BOCA_OPERATION" = boca-public-recipient-metadata-observe || "$BOCA_OPERATION" = boca-telegram-incident-observe || "$BOCA_OPERATION" = boca-telegram-initializer-recover || "$BOCA_OPERATION" = boca-sqlite-inode-observe || "$BOCA_OPERATION" = boca-rootless-mapping-observe || "$BOCA_OPERATION" = boca-panel-exact-origin-observe || "$BOCA_OPERATION" = boca-park-incident-observe || "$BOCA_OPERATION" = boca-pair-upgrade-incident-observe-1241 || "$BOCA_OPERATION" = boca-pair-upgrade-incident-observe-1251 || "$BOCA_OPERATION" = boca-precommit-restore-one-shot || "$BOCA_OPERATION" = boca-postcommit-finalize || "$BOCA_OPERATION" = boca-pair-upgrade-apply || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-events-r112 || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-recover-807 || "$BOCA_OPERATION" = cutover-a-worker-recover-819 || "$BOCA_OPERATION" = cutover-a-worker-recover-827 || "$BOCA_OPERATION" = cutover-a-worker-recover-834 || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-schema-observe || "$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-install-direct || "$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender || "$BOCA_OPERATION" = telegram-prepare-diagnose || "$BOCA_OPERATION" = telegram-public-boundary-observe ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
           elif [[ "$BOCA_OPERATION" = beta-browser-telegram-start || ( "$BOCA_TELEGRAM_OWNER_READY" = ready && ( "$BOCA_OPERATION" = beta-browser-* || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ) ) ]]; then
             test "$BOCA_BUDGET" = 1.75cpu-1152m-224pids
@@ -388,6 +385,31 @@ jobs:
           if [[ "$BOCA_OPERATION" != owner-install ]]; then test -z "$BOCA_OWNER_ENVELOPE"; fi
           if [[ "$BOCA_OPERATION" != owner-enroll ]]; then test -z "$BOCA_OWNER_CAPABILITY_SHA256"; fi
           case "$BOCA_OPERATION" in
+            boca-g18-maintenance-once)
+              test "$GITHUB_ACTOR" = mbalbo2023
+              test "$GITHUB_TRIGGERING_ACTOR" = mbalbo2023
+              test "$GITHUB_RUN_ATTEMPT" = 1
+              test "$BOCA_HOST_READONLY_ENV_READY" = ready
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test "$BOCA_BETA_ENV_READY" = ready
+              test "$BOCA_BROWSER_ENV_READY" = ready
+              test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
+              test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
+              for unexpected in \
+                "$BOCA_SOURCE_SHA_SUBMITTED" "$BOCA_PROTECTED_ACTION_CONTEXT" \
+                "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_RELEASE_RUN_ID" \
+                "$BOCA_LEGACY_SOURCE_SHA" "$BOCA_LEGACY_IMAGE_REF" \
+                "$BOCA_LEGACY_RELEASE_RUN_ID" "$BOCA_LEGACY_CONTROLLER_ID" \
+                "$BOCA_SITE_ENVELOPE" "$BOCA_TELEGRAM_ENVELOPE" \
+                "$BOCA_OWNER_ENVELOPE" "$BOCA_OWNER_CAPABILITY_SHA256" \
+                "$BOCA_FAILED_TELEGRAM_RUN_ID" "$BOCA_OFFICIAL_CONTROLLER_ID" \
+                "$BOCA_OFFICIAL_NEWS_RUN_ID" "$BOCA_OFFICIAL_NEWS_SOURCE_SHA" \
+                "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" "$BOCA_OFFICIAL_NEWS_ZIP_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_JSONL_SHA256" "$BOCA_OFFICIAL_NEWS_HTML_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"; do
+                test -z "$unexpected"
+              done
+              ;;
             worker-physical-once)
               # Isolated once-per-release worker boot; all caller-supplied
               # image/host/legacy/credential fields MUST be blank.
@@ -6187,42 +6209,14 @@ jobs:
           fi
           printf 'Boca Telegram custody phase ended: `%s`; controller and daemon stopped; app/key/owner/Telegram volumes retained.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$main_rc" -ne 0 ]]; then exit 1; fi
-      - name: Validate host Compose model for read-only diagnostic
-        if: inputs.operation == 'diagnostic'
-        env:
-          PYTHONPATH: src
-        run: |
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - diagnostic-config "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-host-model.json"
-          python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-host-model.json" "$BOCA_IMAGE_REF"
-      - name: Inspect only Boca health and dormant motor
-        if: inputs.operation == 'diagnostic'
-        run: |
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - diagnostic "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
-          {
-            printf 'Boca read-only diagnostic: healthy controller, engine off\n\n'
-            printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n\nService: `controller`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  g18-maintenance-once:
-    if: >-
-      github.event_name == 'push' &&
-      github.repository == 'mbalbo2023/boca-socios-assistant' &&
-      github.ref == 'refs/heads/main' &&
-      github.event.head_commit.message == 'ops(g18): one-shot Boca inventory and shutdown'
-    name: G18 exact-pair inventory then rootless pause
-    environment: boca-first-deploy
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
-    steps:
-      - name: Authenticate one-time main, accepted G18 release and actor before SSH
+      - name: Authenticate G18 installed release and owner manual dispatch before SSH
+        if: inputs.operation == 'boca-g18-maintenance-once'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          test "$GITHUB_ACTOR" = mbalbo2023
+          test "$GITHUB_TRIGGERING_ACTOR" = mbalbo2023
           test "$GITHUB_RUN_ATTEMPT" = 1
           test "$GITHUB_REPOSITORY" = "mbalbo2023/boca-socios-assistant"
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
@@ -6232,47 +6226,8 @@ jobs:
           jq -e '.status == "completed" and .conclusion == "success" and .head_sha == "afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8" and .run_attempt == 1' "$RUNNER_TEMP/g18-accepted.json" >/dev/null
           gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" > "$RUNNER_TEMP/g18-open-pr.json"
           jq -e 'type == "array" and length == 0' "$RUNNER_TEMP/g18-open-pr.json" >/dev/null
-      - name: Checkout exact main without persistent credentials
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          persist-credentials: false
-      - name: Verify immutable source and SSH boundary
-        env:
-          BOCA_HOST: ${{ vars.BOCA_DEPLOY_HOST }}
-          BOCA_SSH_KEY: ${{ secrets.BOCA_DEPLOY_SSH_KEY }}
-          BOCA_KNOWN_HOSTS: ${{ secrets.BOCA_DEPLOY_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          [[ "$BOCA_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$ ]]
-          test -n "$BOCA_SSH_KEY"
-          test -n "$BOCA_KNOWN_HOSTS"
-          mkdir -m 700 "$RUNNER_TEMP/boca-ssh"
-          printf '%s\n' "$BOCA_SSH_KEY" > "$RUNNER_TEMP/boca-ssh/key"
-          printf '%s\n' "$BOCA_KNOWN_HOSTS" > "$RUNNER_TEMP/boca-ssh/known_hosts"
-          chmod 600 "$RUNNER_TEMP/boca-ssh/key" "$RUNNER_TEMP/boca-ssh/known_hosts"
-          {
-            printf 'Host boca-target\n'
-            printf '  HostName %s\n' "$BOCA_HOST"
-            printf '  User boca-deploy\n'
-            printf '  IdentityFile %s/boca-ssh/key\n' "$RUNNER_TEMP"
-            printf '  UserKnownHostsFile %s/boca-ssh/known_hosts\n' "$RUNNER_TEMP"
-            printf '  GlobalKnownHostsFile /dev/null\n'
-            printf '  StrictHostKeyChecking yes\n'
-            printf '  BatchMode yes\n'
-            printf '  IdentitiesOnly yes\n'
-            printf '  IdentityAgent none\n'
-            printf '  PasswordAuthentication no\n'
-            printf '  KbdInteractiveAuthentication no\n'
-            printf '  ClearAllForwardings yes\n'
-            printf '  RequestTTY no\n'
-            printf '  UpdateHostKeys no\n'
-            printf '  ConnectTimeout 10\n'
-            printf '  NumberOfPasswordPrompts 0\n'
-            printf '  ForwardAgent no\n'
-          } > "$RUNNER_TEMP/boca-ssh/config"
-          chmod 600 "$RUNNER_TEMP/boca-ssh/config"
       - name: Attested G18 inventory first, stop only Boca UID10001 then verify physical receipt
+        if: inputs.operation == 'boca-g18-maintenance-once'
         id: physical
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -6342,10 +6297,25 @@ jobs:
               out.write("\n".join(lines) + "\n")
           PY
       - name: Publish exact public Boca-only inventory for surgical proposal
-        if: success() && steps.physical.outcome == 'success'
+        if: inputs.operation == 'boca-g18-maintenance-once' && success() && steps.physical.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: boca-g18-docker-inventory-${{ github.run_id }}
           path: ${{ runner.temp }}/boca-g18-inventory.json
           retention-days: 14
           if-no-files-found: error
+      - name: Validate host Compose model for read-only diagnostic
+        if: inputs.operation == 'diagnostic'
+        env:
+          PYTHONPATH: src
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - diagnostic-config "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-host-model.json"
+          python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-host-model.json" "$BOCA_IMAGE_REF"
+      - name: Inspect only Boca health and dormant motor
+        if: inputs.operation == 'diagnostic'
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - diagnostic "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
+          {
+            printf 'Boca read-only diagnostic: healthy controller, engine off\n\n'
+            printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n\nService: `controller`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
