@@ -462,7 +462,7 @@ def verify(
     max_zip = (
         G18_MAINTENANCE_MAX_ZIP
         if g18_maintenance
-        else         PAIR_INCIDENT_1241_MAX_ZIP
+        else PAIR_INCIDENT_1241_MAX_ZIP
         if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
         else TELEGRAM_INITIALIZER_MAX_ZIP
         if telegram_initializer_recover
@@ -505,7 +505,7 @@ def verify(
     max_uncompressed = (
         G18_MAINTENANCE_MAX_UNCOMPRESSED
         if g18_maintenance
-        else         PAIR_INCIDENT_1241_MAX_UNCOMPRESSED
+        else PAIR_INCIDENT_1241_MAX_UNCOMPRESSED
         if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
         else TELEGRAM_INITIALIZER_MAX_UNCOMPRESSED
         if telegram_initializer_recover
