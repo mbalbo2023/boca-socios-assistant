@@ -18,8 +18,8 @@ from typing import Any
 from boca_socios import host_boca_binding_observe as binding
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_pair_observe as pair
+from boca_socios import host_on_demand_lifecycle as on_demand
 from boca_socios import host_on_demand_service as service
-from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
 
 
 INSTALL_SOURCE = "afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8"
@@ -61,7 +61,7 @@ def _canonical(prefix: str, value: dict[str, object]) -> str:
     )
 
 
-def _attested_pair(run_id: str, lease: cleanup.BocaJobLease) -> tuple[OnDemandInstallation, bytes]:
+def _attested_pair(run_id: str, lease: cleanup.BocaJobLease) -> tuple[on_demand.OnDemandInstallation, bytes]:
     installed = service.read_installed_binding(lease)
     observed = pair.observe(run_id)
     binding._attest(run_id, observed, installed)
@@ -186,7 +186,7 @@ def _database_sizes() -> dict[str, object]:
         return {"state": "UNAVAILABLE", "files": {}}
 
 
-def _collect(run_id: str, installed: OnDemandInstallation) -> dict[str, object]:
+def _collect(run_id: str, installed: on_demand.OnDemandInstallation) -> dict[str, object]:
     inventory = cleanup.capture_inventory()
     _require(
         len(inventory.containers) == 2
@@ -332,7 +332,7 @@ def _quiet_unit(name: str, *, optional: bool = False) -> None:
 
 
 def _stop(
-    run_id: str, installed: OnDemandInstallation, before: dict[str, object], lease: cleanup.BocaJobLease
+    run_id: str, installed: on_demand.OnDemandInstallation, before: dict[str, object], lease: cleanup.BocaJobLease
 ) -> dict[str, object]:
     # Last full re-attestation within the same Boca-only lock.
     second, _ = _attested_pair(run_id, lease)
