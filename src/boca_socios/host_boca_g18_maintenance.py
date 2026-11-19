@@ -13,6 +13,9 @@ import re
 import stat
 import sys
 from pathlib import Path
+from typing import Any
+
+from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
 
 from boca_socios import host_boca_binding_observe as binding
 from boca_socios import host_boca_cleanup as cleanup
@@ -58,7 +61,7 @@ def _canonical(prefix: str, value: dict[str, object]) -> str:
     )
 
 
-def _attested_pair(run_id: str, lease: cleanup.BocaJobLease):
+def _attested_pair(run_id: str, lease: cleanup.BocaJobLease) -> tuple[OnDemandInstallation, bytes]:
     installed = service.read_installed_binding(lease)
     observed = pair.observe(run_id)
     binding._attest(run_id, observed, installed)
@@ -75,7 +78,7 @@ def _attested_pair(run_id: str, lease: cleanup.BocaJobLease):
 
 def _du_bounded(base: Path) -> dict[str, object]:
     """Metadata only, no follows or reads, under the Boca-owned stage root."""
-    result: dict[str, object] = {
+    result: dict[str, Any] = {
         "state": "ABSENT",
         "files": 0,
         "logical_bytes": 0,
@@ -183,7 +186,7 @@ def _database_sizes() -> dict[str, object]:
         return {"state": "UNAVAILABLE", "files": {}}
 
 
-def _collect(run_id: str, installed) -> dict[str, object]:
+def _collect(run_id: str, installed: OnDemandInstallation) -> dict[str, object]:
     inventory = cleanup.capture_inventory()
     _require(
         len(inventory.containers) == 2
@@ -226,15 +229,15 @@ def _collect(run_id: str, installed) -> dict[str, object]:
             }
         )
     volumes = []
-    for item in inventory.volumes:
-        labels = cleanup._labels(item.labels)
+    for volume in inventory.volumes:
+        labels = cleanup._labels(volume.labels)
         _require(labels.get("com.docker.compose.project") == cleanup.BOCA_PROJECT, "FOREIGN_VOLUME")
         volumes.append(
             {
-                "name": item.name,
-                "protected": item.name in cleanup.PROTECTED_VOLUMES,
+                "name": volume.name,
+                "protected": volume.name in cleanup.PROTECTED_VOLUMES,
                 "attached": any(
-                    item.name in container.volumes for container in inventory.containers
+                    volume.name in container.volumes for container in inventory.containers
                 ),
                 "logical_bytes": None,
             }
@@ -329,7 +332,7 @@ def _quiet_unit(name: str, *, optional: bool = False) -> None:
 
 
 def _stop(
-    run_id: str, installed, before: dict[str, object], lease: cleanup.BocaJobLease
+    run_id: str, installed: OnDemandInstallation, before: dict[str, object], lease: cleanup.BocaJobLease
 ) -> dict[str, object]:
     # Last full re-attestation within the same Boca-only lock.
     second, _ = _attested_pair(run_id, lease)
@@ -387,7 +390,7 @@ def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return output
 
 
-def _verify_inventory_shape(value: dict[str, object]) -> None:
+def _verify_inventory_shape(value: dict[str, Any]) -> None:
     _require(
         set(value)
         == {
