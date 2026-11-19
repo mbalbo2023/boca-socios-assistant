@@ -21,7 +21,6 @@ from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_on_demand_lifecycle as on_demand
 from boca_socios import host_on_demand_service as service
 
-
 INSTALL_SOURCE = "afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8"
 CONTROLLER = "cc058236f6f9e5372661c80355ae9454ddc643ed705fcb93c54e3d0741b7c167"
 WORKER = "0e0b0c8f1f82f965900bfa462665cfdfb42b8d47e8f089c0d9170d0dc9790548"
