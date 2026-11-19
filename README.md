@@ -1,31 +1,39 @@
 # Boca Socios Assistant
 
-## Estado vigente — 18 de noviembre de 2026
+## Estado vigente — 19 de noviembre de 2026 UTC
 
-**G17 sigue físicamente instalado; G18 no está desplegado y BETA sigue
-NO_GO.** [Lectura #1257](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44413009975):
-G17 `7f20bf0a…`, controller `HEALTHY`, motor `STOPPED`, worker `CREATED/PID0`;
-ledger `NOT_BOUND_TO_CURRENT_INSTALLATION`. G18 UX [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
-MERGED y [release #876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224)
-SUCCESS (no repetir). El único [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452)
-FAILED `ATTEST` antes del commit.
+**G18 está físicamente DESPLEGADO/ACCEPTED; la certificación funcional BETA
+sigue pendiente.** Fuente instalada `afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8`,
+[release dual #877](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44431435425)
+y [único APPLY protegido #1262](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44437268809)
+SUCCESS: `state=ACCEPTED`, `cleanup=ACCEPT`, `commit_started=true`,
+`failed_phase=NONE`. Sin relajar `ATTEST`, sin nuevo código de aplicación.
+[Postflight #1263](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44438577710)
+SUCCESS constató controller `HEALTHY`, engine `STOPPED`, worker `CREATED/PID0`.
+[Admin #1264](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44438834319)
+SUCCESS provisionó sector schema 2 (`legacy_writes=0`), pero Telegram sender
+`ABSENT`, configured/paired `UNVERIFIED`.
+[Lectura origen #1265](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44439039068)
+SUCCESS probó HTTP 200 local en `127.0.0.1:8443`, sin probar sesión privada.
 
-**El diagnóstico forense ya se integró y ejecutó una vez**: [PR #553](https://github.com/mbalbo2023/boca-socios-assistant/pull/553)
-MERGED en `8c3edd972c4be77ebae5be40a54ccff6c3202b30`; CI/security
-3/3 PASS y única [Action #1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614)
-READ_ONLY SUCCESS. Halló evidencia, intención y recibo `NO_GO/ATTEST` sin
-commit ni postflight. D2 reprodujo bytes idénticos para fallo de factory y
-de `attest`: #1251 sigue `ATTEST_ROUTE_UNDETERMINED`, causa `UNPROVEN`.
-[4GO_PRE_CODE](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6993940940)
-autoriza sólo un candidato prospectivo `ATTEST_FACTORY`; no deploy ni retry.
-No repetir #1251/#1255/#1257.
+**El fallo anterior #1251 permanece histórico:** la única [lectura forense
+#1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614)
+confirmó `NO_GO/ATTEST` precommit; factory y backend.attest compartían bytes
+canónicos. Causa exclusiva `UNPROVEN`, sin forzar una corrección especulativa.
+`ATTEST` existía desde G17 (11-Nov), no era seguridad nueva. Tincho
+**disolvió el comité 4GO** y Root ejecutó autónomamente con las protecciones
+vigentes [#417 D4.0–D4.8](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+No repetir APPLY #1251/#1262, observadores #1255/#1257 ni releases previos.
 
 Ya existen rutas para URL/HTTP/intentos, colas/eventos, tokens copiables,
-polling 5 s y Telegram directo; no duplicarlas. Falta instalación física G18,
-prueba de actividad del worker/navegación/DOM, habilitación Telegram, UX
-Samsung y decisión focal sobre «Ingresar»/passkey. `SIMULATION_ONLY`: no
+polling 5 s y Telegram directo; no duplicarlas. [CI Playwright del SHA
+instalado](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44420384820)
+PASS **sintético/offline** en 412×915, 800×1280 y 1536×960; Motor B debajo
+del pliegue vertical. No acredita navegación física ni dispositivo Samsung.
+Faltan pruebas de actividad del worker/navegación/DOM, Telegram, UX Samsung
+y decisión focal sobre «Ingresar»/passkey. `SIMULATION_ONLY`: no
 reservas ni compras reales. Porota y servicios ajenos fuera de alcance.
-**Próximo agente:** leer primero el
+**Continuidad obligatoria:** leer primero el
 [handoff detallado G18](docs/HANDOFF_G18_2026-11-18.md), el
 [estado BETA](docs/BETA_INTEGRATION_STATUS.md) y el
 [ledger #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).

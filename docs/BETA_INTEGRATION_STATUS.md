@@ -1,27 +1,36 @@
 # Estado de integración BETA
 
-## Último checkpoint: G18 NO instalado; D1/D2 verificados — 18-Nov-2026 ART
+## Último checkpoint: G18 instalado/ACCEPTED, BETA por certificar — 19-Nov-2026 UTC
 
 **Handoff operativo vigente:** [G18 18-Nov](HANDOFF_G18_2026-11-18.md)
 y [ledger #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
-El checkpoint vigente **no** es la rama diagnóstica anterior: PR #553 y
-observación #1255 fueron completados. Las secciones inferiores son históricas.
+**Tincho disolvió el comité 4GO** y Root asumió la decisión autónoma en
+[#417 D4.0](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6996778290).
+El deployment nuevo completó el camino técnico sin modificar `ATTEST`.
+Las referencias a «G18 no instalado» en cortes inferiores son **históricas**.
 
 | Etapa | Evidencia verificada | Situación |
 | --- | --- | --- |
-| D1 — G17 físicamente instalado | Fuente `7f20bf0acf43b2e17812bfc35efc86a552b5a404`, [lectura #1257](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44413009975) | Controller `HEALTHY`, motor `STOPPED`, worker `CREATED/PID0`; ledger `NOT_BOUND_TO_CURRENT_INSTALLATION`. No acredita navegación ni explica #1251. |
-| G18 integrado | [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552) MERGED, `main@dbd3f1c494c341c980625da3660e10cc28fa8446`; CI #1327, Playwright sintético #1326, Security #1109 PASS | Mejora de jerarquía `/control/actividad` en código; no prueba funcionamiento real. |
+| **G18 físicamente instalado** | `main@afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8`, [release #877](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44431435425), [APPLY protegido #1262](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44437268809) SUCCESS | `state=ACCEPTED`, `cleanup=ACCEPT`, `commit_started=true`, `failed_phase=NONE`, nuevos CIDs controller/worker. **No repetir**. |
+| **Postflight G18** | [#1263](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44438577710) SUCCESS | `installation_run_id=44437268809`, panel `HEALTHY`, engine `STOPPED`, worker `CREATED/PID0`; no equivale a navegación activa. |
+| **Admin instalado** | [#1264](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44438834319) SUCCESS | `PROVISIONED`, schema 2, `legacy_writes=0`; Telegram sender `ABSENT`, configurado/paired/recibo humano `UNVERIFIED`. |
+| **Acceso local exacto** | [#1265](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44439039068) SUCCESS | HTTP 200 en dos GET a `127.0.0.1:8443`; `site_files=PRESENT_UNVERIFIED`, `observer_writes=0`. Su `OBSERVED_NO_GO/deploy=NO_GO` limita la **autorización de esa lectura**, no revierte el ACCEPTED #1262. |
+| **UI Playwright sintética del SHA instalado** | [CI main #44420384820](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44420384820), artefacto `boca-engine-ui-synthetic-afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8` id `14480658260`; [auditoría D4.8](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6997206009) | PASS 412×915, 800×1280 y 1536×960 sin overflow horizontal; Motor B debajo del pliegue vertical. Datos ficticios, sin sesión real ni control de voz Samsung. |
+| D1 — G17 **histórico** | Fuente `7f20bf0acf43b2e17812bfc35efc86a552b5a404`, [lectura #1257](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44413009975) | Era el G17 previo al #1262, no el runtime actual. Ledger `NOT_BOUND_TO_CURRENT_INSTALLATION`; no explica #1251. |
+| G18 integrado | [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552) MERGED, `main@dbd3f1c494c341c980625da3660e10cc28fa8446`; CI #1327, Playwright sintético #1326, Security #1109 PASS | Mejora de jerarquía `/control/actividad` incorporada a G18 instalado; no prueba funcionamiento real. |
 | Release G18 | [#876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224) SUCCESS, par controller/browser publicado | Imagen publicada, **no** equivale a instalado. No repetir build/release. |
-| Único intento de instalar G18 | [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452) FAILED | `failed_phase=ATTEST`, `commit_started=false`, `cleanup=INDETERMINATE`, sin IDs sucesores. **No repetir APPLY**; causa exclusiva aún UNKNOWN. |
+| Primer intento de instalar G18 **histórico** | [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452) FAILED | `failed_phase=ATTEST`, `commit_started=false`, `cleanup=INDETERMINATE`, sin IDs sucesores. **No repetir**; causa exclusiva aún UNKNOWN. |
 | Diagnóstico #1251 cerrado hasta donde permite el recibo | [PR #553](https://github.com/mbalbo2023/boca-socios-assistant/pull/553) MERGED `main@8c3edd972c4be77ebae5be40a54ccff6c3202b30` (HEAD antes de esta documentación), [CI main](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365020955) 3/3 PASS, [Security](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365020817) 3/3 PASS, [único READ_ONLY #1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614) SUCCESS | Marcadores auténticos `evidence,intent,terminal`, sin `commit` ni `technical-postflight-v2`; `NO_GO/ATTEST`, `observer_writes=0`, **causa exclusiva UNPROVEN**. Ya NO está CODE_ONLY ni pendiente de ejecutar; **no repetir**. |
 
-**Conclusión:** G18 sigue sin desplegar; BETA **NO_GO**. D2 reprodujo bytes
+**Conclusión actual:** G18 desplegado técnicamente, BETA **NO_GO** hasta
+certificación de sus funciones. D2 reprodujo bytes
 idénticos para un fallo de factory y uno de `backend.attest`; #1251 sigue
 `ATTEST_ROUTE_UNDETERMINED`, causa exclusiva `UNPROVEN`. El
 [4GO_PRE_CODE](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6993940940)
-autoriza sólo un candidato de observabilidad futura (`ATTEST_FACTORY`, mismo
-schema 1), no otro observador, publicación, deploy ni retry. Nunca repetir
-#1251, #1255 ni #1257. Los próximos gates están en el handoff canónico.
+era una decisión histórica de observabilidad prospectiva (`ATTEST_FACTORY`,
+mismo schema 1), **no un veto vigente**: no se implementó porque el #1262 pasó
+sin modificar guardas. Nunca repetir #1251, #1255, #1257 ni #1262.
+Las acciones de aceptación restantes están en el handoff canónico.
 
 **Funcionalidad por certificar — reutilizar fuentes existentes:**
 `automatic_observer`, `engine_sessions`, `queue_page_observation`,

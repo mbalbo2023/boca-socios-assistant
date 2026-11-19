@@ -1,31 +1,34 @@
 # Binding instructions for every coding agent
 
-## CHECKPOINT VIGENTE G18 — 2026-11-18 ART / HANDOFF PARA DEPLOY BETA
+## CHECKPOINT VIGENTE G18 — 2026-11-19 UTC / DEPLOY ACCEPTED, BETA PENDIENTE
 
 **Leer primero [handoff G18 completo](docs/HANDOFF_G18_2026-11-18.md) y
 [issue canónico #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).**
-El producto físicamente instalado sigue siendo **G17**
-(`7f20bf0acf43b2e17812bfc35efc86a552b5a404`): la lectura Boca
-[#1257](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44413009975)
-confirmó controller `HEALTHY`, motor `STOPPED`, worker `CREATED/PID0` y
-ledger `NOT_BOUND_TO_CURRENT_INSTALLATION`. No prueba navegación, login ni tokens.
+**G18 YA ESTÁ INSTALADO, no sólo publicado.** Tincho disolvió el comité
+4GO y delegó la decisión en Root [#417 D4.0](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6996778290).
+Sin modificar ni relajar `ATTEST`, el candidato existente del
+`main@afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8` pasó CI/Security y
+publicó un único par de imágenes en [release #877](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44431435425).
+La Action protegida [#1262](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44437268809)
+terminó **`state=ACCEPTED`, `cleanup=ACCEPT`, `commit_started=true`,
+`failed_phase=NONE`**, con nuevos CIDs controller/worker. **No repetir.**
+[Postflight #1263](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44438577710)
+SUCCESS vinculó la instalación y acreditó panel `HEALTHY`, motor `STOPPED`,
+worker `CREATED/PID0`. [Admin #1264](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44438834319)
+SUCCESS provisionó sector schema 2 sin escrituras legacy; sender Telegram
+`ABSENT`, configurado/paired/recibo humano `UNVERIFIED`.
+[Origen #1265](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44439039068)
+SUCCESS registró dos GET de health HTTP 200 en `127.0.0.1:8443` (observación
+acotada, no Playwright ni passkey).
 
-**G18 está MERGED y publicado, NO desplegado:** [PR #552](https://github.com/mbalbo2023/boca-socios-assistant/pull/552)
-y [release #876](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44348462224)
-SUCCESS; único [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452)
-FAILED `ATTEST`, sin commit ni contenedores nuevos. **No reintentar.**
-El diagnóstico dejó de ser CODE_ONLY: [PR forense #553](https://github.com/mbalbo2023/boca-socios-assistant/pull/553)
-MERGED en `8c3edd972c4be77ebae5be40a54ccff6c3202b30` después de
-4GO_FINAL; CI main [44365020955](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365020955)
-3/3 PASS y Security [44365020817](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365020817)
-3/3 PASS. **Una sola** observación forense READ_ONLY [#1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614)
-SUCCESS halló marcadores genuinos `evidence,intent,terminal`, sin `commit` ni
-`technical-postflight-v2`: `NO_GO/ATTEST`, causa exclusiva `UNPROVEN`.
-D2 reprodujo bytes idénticos para un fallo de factory o de `backend.attest`;
-#1251 sigue `ATTEST_ROUTE_UNDETERMINED`. Root, Arquitectura, QA y Operaciones
-dieron [4GO_PRE_CODE](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6993940940)
-sólo para un candidato prospectivo `ATTEST_FACTORY`. No cambia el recibo
-histórico, no autoriza deploy ni retry. No repetir #1251/#1255/#1257.
+**ATTEST NO ES UNA PROTECCIÓN NUEVA**: existía en G17 desde el 11-Nov.
+El viejo [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44352430452)
+falló `ATTEST` sin commit; la [única lectura #1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614)
+halló `evidence,intent,terminal`. Dos rutas de fallo generan el mismo recibo,
+por lo que `ATTEST_ROUTE_UNDETERMINED`, causa histórica `UNPROVEN`, sigue
+correcto. El instrumento prospectivo `ATTEST_FACTORY` no fue implementado:
+no se demostró un defecto que justificara modificar guards. No repetir #1251,
+#1255, #1257, #1262 ni releases/builds previos.
 
 **Código existente: REUTILIZAR.** Navegación URL/HTTP/intentos, evento/cola,
 Queue-it/Boca tokens y copia, polling 5 s, Telegram token/Chat ID directo y
@@ -33,15 +36,24 @@ dos motores lógicos ya tienen rutas. [Inventario UX](https://github.com/mbalbo2
 No confundir `has_auth` con login DOM, worker CREATED con motor activo, ni
 configuración de Telegram con sender habilitado. `Ingresar` aún pide passkey
 sin sesión; Motor B bajo pliegue y copia profunda requieren QA/corrección
-focal. **BETA NO_GO**, `SIMULATION_ONLY`, **sin reservas reales**.
+focal. El [Playwright sintético CI main 44420384820](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44420384820),
+artefacto id `14480658260`, está auditado en
+[#417 D4.8](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6997206009):
+412×915, 800×1280 y 1536×960 PASS, sin overflow; Motor B aún debajo del
+pliegue vertical. **No es certificación del droplet ni de voz Samsung.**
+**BETA NO_GO**, `SIMULATION_ONLY`, **sin reservas reales**.
 
-**Ownership y próxima acción:** Root integra/checkpoint; Arquitectura, QA y
-Operaciones dictaminan independientemente antes de código, con autor distinto.
-Reconciliar el HEAD y PR abiertos antes de trabajar; no repetir PR, builds,
-release, APPLY ni observaciones. Toda operación física/Playwright del droplet
-**sólo GitHub Actions Boca**; nunca navegar el servicio privado desde browser
-interno ni tocar Porota, otros puertos, servicios o Docker. No solicitar de
-nuevo autorizaciones ya concedidas. Las secciones inferiores son HISTÓRICAS.
+**Ownership y próxima acción:** Root decide autónomamente sin comité;
+revisores/autor separados sólo como control de calidad de eventuales cambios
+demostrados, no como gate político. Falta certificar con Action física segura
+y, con la sesión del titular, motores A/B, URL/intentos/HTTP, cola/eventos,
+tokens/DOM por socio, Telegram y Samsung vertical/horizontal/control por voz.
+La Action antigua `beta-browser-acceptance` ejecuta `stop-test` y no equivale
+a Playwright del G18 instalado; no invocarla para este fin. Reconciliar HEAD,
+PR y Actions antes de cualquier paso; doc-only SHA posterior no es un release
+de producto nuevo. Todo host/Playwright **sólo GitHub Actions Boca**; no
+acceder al panel privado desde browser interno ni tocar Porota o Docker ajeno.
+Documentar cada avance en #417. Secciones inferiores: HISTÓRICAS.
 
 ## Histórico: checkpoint G17 — 2026-11-18 ART (corte previo / CODE_ONLY)
 
