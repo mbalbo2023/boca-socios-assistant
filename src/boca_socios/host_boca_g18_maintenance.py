@@ -437,7 +437,7 @@ def main(args: list[str] | None = None) -> int:
         run_id, workflow_sha = argv[1:]
         _require(workflow_sha != INSTALL_SOURCE, "WORKFLOW_CODE_NOT_NEW")
         if argv[0] == "verify":
-            verified = verify(sys.stdin.buffer.read(MAX_RECEIPT + 1), run_id)
+            verify(sys.stdin.buffer.read(MAX_RECEIPT + 1), run_id)
             print("BOCA_G18_VERIFY state=PASS scope=BOCA_UID10001_ONLY "
                   "inventory=VERIFIED rootless_docker=STOPPED data_preserved=true")
             return 0
