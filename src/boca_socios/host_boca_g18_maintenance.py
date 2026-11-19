@@ -60,7 +60,9 @@ def _canonical(prefix: str, value: dict[str, object]) -> str:
     )
 
 
-def _attested_pair(run_id: str, lease: cleanup.BocaJobLease) -> tuple[on_demand.OnDemandInstallation, bytes]:
+def _attested_pair(
+    run_id: str, lease: cleanup.BocaJobLease
+) -> tuple[on_demand.OnDemandInstallation, bytes]:
     installed = service.read_installed_binding(lease)
     observed = pair.observe(run_id)
     binding._attest(run_id, observed, installed)
@@ -331,7 +333,10 @@ def _quiet_unit(name: str, *, optional: bool = False) -> None:
 
 
 def _stop(
-    run_id: str, installed: on_demand.OnDemandInstallation, before: dict[str, object], lease: cleanup.BocaJobLease
+    run_id: str,
+    installed: on_demand.OnDemandInstallation,
+    before: dict[str, object],
+    lease: cleanup.BocaJobLease,
 ) -> dict[str, object]:
     # Last full re-attestation within the same Boca-only lock.
     second, _ = _attested_pair(run_id, lease)
