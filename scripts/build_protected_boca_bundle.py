@@ -206,11 +206,11 @@ BINDING_MAIN = (
 # One G18-only maintenance closure. It does not inherit the deployment CLI.
 G18_MAINTENANCE_SOURCES = (*BINDING_SOURCES, "src/boca_socios/host_boca_g18_maintenance.py")
 G18_MAINTENANCE_MAIN = (
-    "import sys\\n"
-    "if len(sys.argv) != 4 or sys.argv[1] != 'boca-g18-maintenance-once':\\n"
-    "    raise SystemExit(3)\\n"
-    "from boca_socios.host_boca_g18_maintenance import main as maintenance\\n"
-    "raise SystemExit(maintenance(['host',sys.argv[2],sys.argv[3]]))\\n"
+    "import sys\n"
+    "if len(sys.argv) != 4 or sys.argv[1] != 'boca-g18-maintenance-once':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_g18_maintenance import main as maintenance\n"
+    "raise SystemExit(maintenance(['host',sys.argv[2],sys.argv[3]]))\n"
 ).encode("ascii")
 G18_MAINTENANCE_MAX_SOURCE_BYTES = 1_100_000
 G18_MAINTENANCE_MAX_ARCHIVE_BYTES = 380_000
