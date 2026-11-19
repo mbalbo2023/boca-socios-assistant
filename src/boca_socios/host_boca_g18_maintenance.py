@@ -307,6 +307,91 @@ def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return output
 
 
+def _verify_inventory_shape(value: dict[str, object]) -> None:
+    _require(set(value) == {
+        "schema", "state", "run_id", "installed_source", "installation_run",
+        "controller_id", "worker_id", "containers", "networks", "volumes",
+        "image_count", "classified_images", "unclassified_image_count",
+        "reclaimable_image_candidates", "disk", "docker_accounting",
+        "stage_files", "database", "effects"
+    }, "INVENTORY_FIELDS")
+    containers = value["containers"]
+    _require(containers == {"total": 2, "running": 1, "created_or_exited": 1},
+             "INVENTORY_CONTAINERS")
+    for name in ("networks", "image_count", "unclassified_image_count"):
+        _require(type(value[name]) is int and 0 <= value[name] <= 256,
+                 "INVENTORY_COUNTS")
+    disk = value["disk"]
+    _require(type(disk) is dict and set(disk) == {
+        "stage_free_bytes", "stage_free_inodes", "docker_free_bytes",
+        "docker_free_inodes"
+    } and all(type(v) is int and 0 <= v <= 2**60 for v in disk.values()),
+             "INVENTORY_DISK")
+    cleanup._validate_rootless_disk_accounting(value["docker_accounting"])
+    stage = value["stage_files"]
+    _require(type(stage) is dict and set(stage) == {
+        "state", "files", "logical_bytes", "allocated_bytes",
+        "backups", "backup_bytes", "logs", "log_bytes", "symlinks_skipped"
+    } and stage["state"] in {
+        "ABSENT", "UNVERIFIED", "COMPLETE", "PARTIAL",
+        "PARTIAL_LIMIT", "PARTIAL_DEPTH"
+    } and all(type(v) is int and 0 <= v <= 2**60
+              for k, v in stage.items() if k != "state"), "INVENTORY_STAGE")
+    database = value["database"]
+    _require(type(database) is dict and set(database) == {"state", "files"}
+             and database["state"] in {"OBSERVED", "UNAVAILABLE"}
+             and type(database["files"]) is dict, "INVENTORY_DB")
+    if database["state"] == "OBSERVED":
+        _require(set(database["files"]) == {
+            "boca.sqlite3", "boca.sqlite3-wal", "boca.sqlite3-shm"
+        }, "INVENTORY_DB")
+        for item in database["files"].values():
+            _require(item is None or
+                     (type(item) is dict and set(item) == {"bytes", "allocated_bytes"}
+                      and all(type(x) is int and 0 <= x <= 2**48 for x in item.values())),
+                     "INVENTORY_DB")
+    else:
+        _require(database["files"] == {}, "INVENTORY_DB")
+    volumes = value["volumes"]
+    _require(type(volumes) is list and len(volumes) <= 24, "INVENTORY_VOLUME")
+    names = set()
+    for item in volumes:
+        _require(type(item) is dict and set(item) == {
+            "name", "protected", "attached", "logical_bytes"
+        } and type(item["name"]) is str
+                 and item["name"].startswith("boca-socios_")
+                 and cleanup.DOCKER_NAME.fullmatch(item["name"]) is not None
+                 and type(item["protected"]) is bool and type(item["attached"]) is bool
+                 and item["logical_bytes"] is None
+                 and item["protected"] == (item["name"] in cleanup.PROTECTED_VOLUMES)
+                 and item["name"] not in names, "INVENTORY_VOLUME")
+        names.add(item["name"])
+    images = value["classified_images"]
+    candidates = value["reclaimable_image_candidates"]
+    _require(type(images) is list and len(images) <= 128
+             and type(candidates) is list and len(candidates) <= 128,
+             "INVENTORY_IMAGES")
+    eligible = set()
+    for item in images:
+        _require(type(item) is dict and set(item) == {
+            "image_id", "used", "proven_boca", "logical_bytes"
+        } and type(item["used"]) is bool and type(item["proven_boca"]) is bool
+                 and (item["image_id"] == "UNCLASSIFIED"
+                      if not item["proven_boca"] else
+                      cleanup.HEX_ID.fullmatch(item["image_id"]) is not None)
+                 and (item["logical_bytes"] is None or type(item["logical_bytes"]) is int
+                      and 0 <= item["logical_bytes"] <= 16 * 1024**3),
+                 "INVENTORY_IMAGES")
+        if item["proven_boca"] and not item["used"]:
+            eligible.add((item["image_id"], item["logical_bytes"]))
+    seen = set()
+    for item in candidates:
+        _require(type(item) is dict and set(item) == {"image_id", "logical_bytes"}
+                 and (item["image_id"], item["logical_bytes"]) in eligible
+                 and item["image_id"] not in seen, "INVENTORY_CANDIDATES")
+        seen.add(item["image_id"])
+
+
 def verify(raw: bytes, run_id: str) -> dict[str, object]:
     _require(type(raw) is bytes and 0 < len(raw) <= MAX_RECEIPT
              and raw.endswith(b"\n"), "INVALID_RECEIPT")
@@ -339,6 +424,7 @@ def verify(raw: bytes, run_id: str) -> dict[str, object]:
              and lines[0] == _canonical(PREFIX_INVENTORY, inventory)
              and lines[1] == _canonical(PREFIX_STOP, stopped),
              "INVALID_RECEIPT")
+    _verify_inventory_shape(inventory)
     return {"inventory": inventory, "stop": stopped}
 
 
