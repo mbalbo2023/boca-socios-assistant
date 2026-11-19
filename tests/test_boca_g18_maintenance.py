@@ -17,7 +17,7 @@ class G18MaintenanceContract(unittest.TestCase):
     def test_bad_or_missing_receipts_never_certify_shutdown(self) -> None:
         for raw in (b"", b"BOCA_G18_STOP state=STOPPED\n", b"{}\n{}\n",
                     b"BOCA_G18_INVENTORY {}\nBOCA_G18_STOP {}\n"):
-            with self.subTest(raw=raw[:32]), self.assertRaises(Exception):
+            with self.subTest(raw=raw[:32]), self.assertRaises(m.NoGo):
                 m.verify(raw, "123456789")
 
     def test_no_host_writes_on_ineligible_dispatch(self) -> None:
