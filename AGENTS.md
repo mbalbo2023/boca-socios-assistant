@@ -2,7 +2,8 @@
 
 ## CHECKPOINT VIGENTE G18 — 2026-11-19 UTC / DEPLOY ACCEPTED, BETA PENDIENTE
 
-**Leer primero [handoff G18 completo](docs/HANDOFF_G18_2026-11-18.md) y
+**Leer primero [checkpoint G18 del 19-Nov](docs/handoffs/2026-11-19-g18-beta-checkpoint.md),
+[handoff G18 completo](docs/HANDOFF_G18_2026-11-18.md) y
 [issue canónico #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).**
 **G18 YA ESTÁ INSTALADO, no sólo publicado.** Tincho disolvió el comité
 4GO y delegó la decisión en Root [#417 D4.0](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6996778290).

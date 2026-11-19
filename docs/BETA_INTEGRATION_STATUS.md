@@ -2,6 +2,9 @@
 
 ## Último checkpoint: G18 instalado/ACCEPTED, BETA por certificar — 19-Nov-2026 UTC
 
+**Checkpoint de continuidad con RCA, riesgos y trabajo en curso:**
+[G18 BETA — 19-Nov](handoffs/2026-11-19-g18-beta-checkpoint.md).
+
 **Handoff operativo vigente:** [G18 18-Nov](HANDOFF_G18_2026-11-18.md)
 y [ledger #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
 **Tincho disolvió el comité 4GO** y Root asumió la decisión autónoma en

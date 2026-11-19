@@ -2,6 +2,9 @@
 
 ## Estado vigente — 19 de noviembre de 2026 UTC
 
+**Checkpoint para nuevo chat, RCA, bloqueantes y lecciones:**
+[continuidad G18 del 19-Nov](docs/handoffs/2026-11-19-g18-beta-checkpoint.md).
+
 **G18 está físicamente DESPLEGADO/ACCEPTED; la certificación funcional BETA
 sigue pendiente.** Fuente instalada `afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8`,
 [release dual #877](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44431435425)
