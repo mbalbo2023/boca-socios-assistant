@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile src/boca_socios/host_boca_g18_maintenance.py scripts/build_protected_boca_bundle.py scripts/boca_protected_memfd_bootstrap.py tests/test_boca_g18_maintenance.py
-          python3 -m unittest tests.test_boca_g18_maintenance -v
+          python3 -m unittest discover -s tests -p "test_boca_g18_maintenance.py" -v
       - name: Build and verify the isolated SHA-pinned memfd bundle without SSH
         env:
           PYTHONPATH: src
