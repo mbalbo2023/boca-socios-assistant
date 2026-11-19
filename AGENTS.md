@@ -55,7 +55,12 @@ a Playwright del G18 instalado; no invocarla para este fin. Reconciliar HEAD,
 PR y Actions antes de cualquier paso; doc-only SHA posterior no es un release
 de producto nuevo. Todo host/Playwright **sólo GitHub Actions Boca**; no
 acceder al panel privado desde browser interno ni tocar Porota o Docker ajeno.
-Documentar cada avance en #417. Secciones inferiores: HISTÓRICAS.
+Documentar cada avance en #417. [D5.0](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6998086501)
+probó que los selectors antiguos de browser/worker no certifican G18:
+`beta-browser-acceptance` llama `stop-test`, y W1/physical-once tienen pins
+históricos. La aceptación guest real necesita un nuevo test acotado en Boca
+Actions; la aceptación owner/Samsung sigue requiriendo sesión real de Tincho.
+Secciones inferiores: HISTÓRICAS.
 
 ## Histórico: checkpoint G17 — 2026-11-18 ART (corte previo / CODE_ONLY)
 
