@@ -97,3 +97,30 @@ y [README.md](../../README.md).
 > código ni PR, no reservas reales, nada de Porota. Todo host sólo por Boca
 > GitHub Actions; publicar avances en #417 y mantener Markdown. Rama documental
 > `docs/417-g18-accepted-20261119` sin PR/merge para evitar build duplicado.
+
+## 8. D5.3 — reconciliación de código de QA y protocolo de evidencia BETA (19-Nov-2026 ART)
+
+**Revalidación de GitHub sin ejecución:** `main@afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8`, **0 PR abiertos**; los últimos runs del repositorio son #1262–#1265 `completed/success`, sin Action nueva ni cambio de instalación. La rama de documentación parte del mismo SHA instalado y conserva sus identificadores y recibos.
+
+**Código previo recuperado, sin duplicarlo:**
+
+- `scripts/qa_guest_navigation_playwright.py` **ya existe en main** (blob `e9dce390d89ded45566e2c8f61575bda078ea666`). Abre Chromium sobre una instancia WSGI **sintética del runner**; `mode=OFFLINE_FIXTURE`, `owner_auth=WSGI_SYNTHETIC_ONLY`, bloquea destinos externos y no captura el droplet. No es la Action física que falta; no ejecutarlo nuevamente como supuesto test host.
+- La rama residual `feat/417-guest-readonly-fast-ci` está **divergida de main** (3 commits ahead / 11 behind según GitHub compare). Ya contiene ese tipo de navegación **offline** y cambios históricos de panel; **no** es un candidato limpio para G18 ni una Action host. No revivirla ni duplicar su script; no hay PR abierto asociado. No se modificó esa rama.
+- `panel/engine_view.py` en main contiene las tarjetas lógicas A/B y sus campos para URL configurada, último intento, URL final, evento, cola, tokens y autenticación de B. La leyenda distingue expresamente «Actividad física actual: No comprobada en esta vista». `_forms` deshabilita START si SITE_URL no está disponible, y B además requiere socio con credencial activa. Esto es **código instalado**, no prueba de que la URL/socio estén listos o que una sesión haya navegado.
+- `beta-browser-acceptance` sigue haciendo `stop-test` en cleanup; los selectors físicos heredados continúan pinneados a un par anterior; `boca-panel-exact-origin-observe` ya agotó su alcance en #1265. No se despachó ninguno de ellos.
+
+**Ruling autónomo Root:** preservar el G18 aceptado y no agregar aún un workflow/PR/build para capturas guest que seguirían sin certificar sesión privada, worker, DOM, Telegram ni voz. Preparar primero una observación **sin efectos** desde la Samsung del titular para distinguir defectos de visualización reales de falta de configuración y de falta de evidencia física. No tratar la ausencia de una captura como fallo del producto. Si después la prueba física precisa código, usar un **solo** contrato nuevo de QA de Boca Actions, con SHA/CIDs de #1262, GET guest sin cookies/POST ni datos privados y recibos tipados; activar motores sólo mediante una operación compatible y acotada de **simulación** con START/STOP exactos. Nunca reutilizar pins antiguos ni quitar controles para conseguir PASS.
+
+### Secuencia de aceptación pendiente (sin secretos ni reservas)
+
+| Orden | Superficie y observación | Evidencia esperada | Sin inferir |
+| --- | --- | --- | --- |
+| 1 | Samsung real: sesión passkey ya establecida; Control/Actividad/Configuración vertical y horizontal, navegación con Voice Access | Visibilidad de A/B, foco, lectura de estado y botones, densidad y cambio entre las tres pantallas; captura saneada | Un Chromium offline no prueba voz ni dispositivo |
+| 2 | Configuración privada (solo observación): SITE_URL listo/no listo; socio con credencial activa presente/ausente; Telegram editable | Estados **sí/no/no verificado** sin publicar URLs, nombres, IDs ni tokens | «Formulario presente» no prueba fuente ni sender |
+| 3 | Boca Action compatible con instalación #1262 **por diseñar si hace falta** | Identidad de controller/worker, inicio/parada controlado, cada intento, URL/HTTP, evento/cola/token o ausencia observada con procedencia | STOPPED/PID0 no es visita; requests/contextos no son navegación |
+| 4 | Sesión privada legítima de socio y DOM | Resultado de login **DOM**, URL/estado por socio, reserva **sólo simulada** | `has_auth` o token no acreditan DOM |
+| 5 | Telegram con custodia y recibo real revisado | configured/paired/sender/human receipt separados | PROVISIONED no significa «conectado» |
+
+**Instrucción mínima para Tincho ahora:** abrir el panel privado con su acceso habitual en la Samsung; visitar **Control → Actividad → Configuración** en vertical y horizontal; probar Voice Access para activar la navegación y localizar A/B; remitir únicamente observaciones y capturas **ocultando URL privada, credenciales, socios, tokens y Chat ID**. En esta primera pasada no pulsar **Iniciar/Detener motores, Guardar Telegram o Reservar**; la fase física del worker será por Boca Actions compatible. No requiere terminal ni comandos. Tampoco hay necesidad de modificar passkey.
+
+**Límites y avance de esta entrada:** auditoría GitHub + trazabilidad de código + protocolo de aceptación, **cero** nuevos Actions, builds, PR, modificación de host, motor, Telegram, reserva o Porota. `BETA_GO=NO`, `OWNER_SAMSUNG=UNVERIFIED`, `MOTORS_PHYSICAL=UNVERIFIED`. RCA #1251 permanece `exclusive_cause=UNPROVEN`.

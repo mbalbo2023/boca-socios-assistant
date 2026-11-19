@@ -63,6 +63,9 @@ históricos. La aceptación guest real necesita un nuevo test acotado en Boca
 Actions; la aceptación owner/Samsung sigue requiriendo sesión real de Tincho.
 Secciones inferiores: HISTÓRICAS.
 
+**Continuidad D5.3 (19-Nov ART):** el Playwright guest `scripts/qa_guest_navigation_playwright.py` ya está en `main`, pero es `OFFLINE_FIXTURE`; la rama antigua `feat/417-guest-readonly-fast-ci` (3 ahead/11 behind) no certifica el droplet. `engine_view.py` ya expone A/B, URL/intentos/evento/cola/token y diferencia actividad física no comprobada; START requiere SITE_URL y B requiere socio activo. Root prioriza una observación sin efectos desde Samsung/Voice Access (Control → Actividad → Configuración, vertical/horizontal, capturas saneadas, sin START/Telegram). Cualquier activación física posterior requiere Boca Action nueva compatible con SHA/CIDs de #1262; no usar selectors viejos. Detalle: [checkpoint D5.3](docs/handoffs/2026-11-19-g18-beta-checkpoint.md#8-d53--reconciliación-de-código-de-qa-y-protocolo-de-evidencia-beta-19-nov-2026-art). **BETA_GO=NO**; cero Actions nuevas.
+
+
 ## Histórico: checkpoint G17 — 2026-11-18 ART (corte previo / CODE_ONLY)
 
 Fuente físicamente aceptada y **no repetir**: G16

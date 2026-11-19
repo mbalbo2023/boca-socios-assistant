@@ -54,6 +54,9 @@ sin compras ni reservas reales. Todas las operaciones host y Playwright
 físico sólo por GitHub Actions Boca; Porota, otros contenedores/puertos
 intocables. Criterios y orden en el [handoff](HANDOFF_G18_2026-11-18.md).
 
+**D5.3 — prueba segura y reutilización (19-Nov ART):** `scripts/qa_guest_navigation_playwright.py` de `main` ya prueba sólo WSGI sintética, no droplet; rama residual `feat/417-guest-readonly-fast-ci` diverge y no se reutiliza como Action física. La UI A/B ya contiene los campos requeridos, pero motor/SITE_URL/socio/Telegram siguen sin prueba real. Primero observación de Tincho en Samsung vertical/horizontal y Voice Access, sin ejecutar controles; después sólo una Boca Action exacta, de simulación y recibos tipados si añade evidencia. [Checklist D5.3](handoffs/2026-11-19-g18-beta-checkpoint.md#8-d53--reconciliación-de-código-de-qa-y-protocolo-de-evidencia-beta-19-nov-2026-art). `BETA_GO=NO`; ningún build/deploy nuevo.
+
+
 ## Histórico: G17 Motor A / UX evidenciable (corte anterior, 18-Nov-2026 ART)
 
 **Instalación actual G16 aceptada; no repetir** release874, protected APPLY
