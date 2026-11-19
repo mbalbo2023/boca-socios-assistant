@@ -26,8 +26,10 @@ El viejo [APPLY #1251](https://github.com/mbalbo2023/boca-socios-assistant/actio
 falló `ATTEST` sin commit; la [única lectura #1255](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44365905614)
 halló `evidence,intent,terminal`. Dos rutas de fallo generan el mismo recibo,
 por lo que `ATTEST_ROUTE_UNDETERMINED`, causa histórica `UNPROVEN`, sigue
-correcto. El instrumento prospectivo `ATTEST_FACTORY` no fue implementado:
-no se demostró un defecto que justificara modificar guards. No repetir #1251,
+correcto. **Sí se integró** en [PR #555](https://github.com/mbalbo2023/boca-socios-assistant/pull/555)
+la etiqueta diagnóstica prospectiva `ATTEST_FACTORY`, que diferencia una
+factory fallida de `backend.attest` en recibos futuros. No repara la causa
+histórica ni relaja guardas de seguridad. No repetir #1251,
 #1255, #1257, #1262 ni releases/builds previos.
 
 **Código existente: REUTILIZAR.** Navegación URL/HTTP/intentos, evento/cola,

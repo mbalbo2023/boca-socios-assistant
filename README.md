@@ -7,7 +7,9 @@ sigue pendiente.** Fuente instalada `afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8`,
 [release dual #877](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44431435425)
 y [único APPLY protegido #1262](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44437268809)
 SUCCESS: `state=ACCEPTED`, `cleanup=ACCEPT`, `commit_started=true`,
-`failed_phase=NONE`. Sin relajar `ATTEST`, sin nuevo código de aplicación.
+`failed_phase=NONE`. Sin relajar `ATTEST`: el candidato incluía la
+clasificación futura `ATTEST_FACTORY` de [PR #555](https://github.com/mbalbo2023/boca-socios-assistant/pull/555),
+no una reparación retrospectiva ni un cambio de las guardas.
 [Postflight #1263](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44438577710)
 SUCCESS constató controller `HEALTHY`, engine `STOPPED`, worker `CREATED/PID0`.
 [Admin #1264](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/44438834319)

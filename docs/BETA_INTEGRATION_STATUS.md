@@ -6,7 +6,9 @@
 y [ledger #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
 **Tincho disolvió el comité 4GO** y Root asumió la decisión autónoma en
 [#417 D4.0](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6996778290).
-El deployment nuevo completó el camino técnico sin modificar `ATTEST`.
+El deployment nuevo completó el camino técnico sin relajar `ATTEST`; el
+`main@afb0ac0…` sí incluía la clasificación prospectiva de factory de
+[PR #555](https://github.com/mbalbo2023/boca-socios-assistant/pull/555).
 Las referencias a «G18 no instalado» en cortes inferiores son **históricas**.
 
 | Etapa | Evidencia verificada | Situación |
@@ -28,8 +30,9 @@ idénticos para un fallo de factory y uno de `backend.attest`; #1251 sigue
 `ATTEST_ROUTE_UNDETERMINED`, causa exclusiva `UNPROVEN`. El
 [4GO_PRE_CODE](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6993940940)
 era una decisión histórica de observabilidad prospectiva (`ATTEST_FACTORY`,
-mismo schema 1), **no un veto vigente**: no se implementó porque el #1262 pasó
-sin modificar guardas. Nunca repetir #1251, #1255, #1257 ni #1262.
+mismo schema 1), **no un veto vigente**. Esa clasificación se implementó y
+probó en PR #555 antes de #1262; no explica ni repara #1251 y no rebaja
+guardas. Nunca repetir #1251, #1255, #1257 ni #1262.
 Las acciones de aceptación restantes están en el handoff canónico.
 
 **Funcionalidad por certificar — reutilizar fuentes existentes:**
