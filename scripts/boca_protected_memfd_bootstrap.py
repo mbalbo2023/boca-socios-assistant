@@ -203,6 +203,10 @@ CURRENT_RETAINED_ENTRIES = (
 )
 # R179 requires *different* SHA-pinned transports: a read-only SQLite witness
 # and a separately admitted transaction. Neither inherits browser code.
+# Dedicated G18-only maintenance; no deploy, releases or unreviewed target inputs.
+G18_MAINTENANCE_ENTRIES = BINDING_ENTRIES | {"boca_socios/host_boca_g18_maintenance.py"}
+G18_MAINTENANCE_MAX_ZIP = 380_000
+G18_MAINTENANCE_MAX_UNCOMPRESSED = 1_100_000
 INSTALLED_ADMIN_ENTRIES = CURRENT_RETAINED_ENTRIES | {
     "boca_socios/host_boca_installed_admin.py",
     "boca_socios/host_on_demand_status.py",
@@ -410,6 +414,7 @@ def verify(
     current_retained_observe: bool = False,
     installed_admin: bool = False,
     binding_observe: bool = False,
+    g18_maintenance: bool = False,
     public_recipient_metadata_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
@@ -437,6 +442,7 @@ def verify(
                 current_retained_observe,
                 installed_admin,
                 binding_observe,
+                g18_maintenance,
                 public_recipient_metadata_observe,
                 sqlite_observe,
                 pair_upgrade,
@@ -454,7 +460,9 @@ def verify(
     ):
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
-        PAIR_INCIDENT_1241_MAX_ZIP
+        G18_MAINTENANCE_MAX_ZIP
+        if g18_maintenance
+        else PAIR_INCIDENT_1241_MAX_ZIP
         if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
         else TELEGRAM_INITIALIZER_MAX_ZIP
         if telegram_initializer_recover
@@ -495,7 +503,9 @@ def verify(
         else MAX_ZIP
     )
     max_uncompressed = (
-        PAIR_INCIDENT_1241_MAX_UNCOMPRESSED
+        G18_MAINTENANCE_MAX_UNCOMPRESSED
+        if g18_maintenance
+        else PAIR_INCIDENT_1241_MAX_UNCOMPRESSED
         if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
         else TELEGRAM_INITIALIZER_MAX_UNCOMPRESSED
         if telegram_initializer_recover
@@ -543,7 +553,9 @@ def verify(
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         allowlisted = (
-            (PAIR_INCIDENT_1241_ENTRIES,)
+            (G18_MAINTENANCE_ENTRIES,)
+            if g18_maintenance
+            else (PAIR_INCIDENT_1241_ENTRIES,)
             if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
             else (TELEGRAM_INITIALIZER_ENTRIES,)
             if telegram_initializer_recover
@@ -668,6 +680,7 @@ def main() -> int:
             "boca-installed-admin-provision",
         )
         binding_observe = sys.argv[2] == "boca-binding-observe"
+        g18_maintenance = sys.argv[2] == "boca-g18-maintenance-once"
         public_recipient_metadata_observe = sys.argv[2] == "boca-public-recipient-metadata-observe"
         sqlite_observe = sys.argv[2] == "boca-sqlite-inode-observe"
         pair_upgrade = sys.argv[2] == "boca-pair-upgrade-apply"
@@ -726,6 +739,12 @@ def main() -> int:
             5 if sys.argv[2] == "boca-installed-status-observe" else 6
         ):
             raise ValueError("installed Boca administration requires exact observer coordinates")
+        if g18_maintenance and (
+            len(sys.argv) != 5
+            or re.fullmatch(r"[1-9][0-9]{0,19}", sys.argv[3]) is None
+            or re.fullmatch(r"[a-f0-9]{40}", sys.argv[4]) is None
+        ):
+            raise ValueError("G18 maintenance requires authenticated run and workflow source")
         if binding_observe and len(sys.argv) != 4:
             raise ValueError("Boca binding observer requires one GitHub run ID only")
         if public_recipient_metadata_observe and (
@@ -747,7 +766,9 @@ def main() -> int:
         if precommit_restore and len(sys.argv) != 4:
             raise ValueError("precommit recovery requires only fresh authenticated run ID")
         bound = (
-            PAIR_INCIDENT_1241_MAX_ZIP
+            G18_MAINTENANCE_MAX_ZIP
+            if g18_maintenance
+            else PAIR_INCIDENT_1241_MAX_ZIP
             if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
             else TELEGRAM_INITIALIZER_MAX_ZIP
             if telegram_initializer_recover
@@ -802,6 +823,7 @@ def main() -> int:
             current_retained_observe=current_retained_observe,
             installed_admin=installed_admin,
             binding_observe=binding_observe,
+            g18_maintenance=g18_maintenance,
             public_recipient_metadata_observe=public_recipient_metadata_observe,
             sqlite_observe=sqlite_observe,
             pair_upgrade=pair_upgrade,
