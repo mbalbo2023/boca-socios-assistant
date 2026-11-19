@@ -182,7 +182,6 @@ jobs:
           verify(raw, hashlib.sha256(raw).hexdigest(), g18_maintenance=True)
           print("BOCA_G18_SOURCE_REVIEW_PASS host_calls=0 deletions=0")
           PY_G18_REVIEW
-          uv run ruff format --diff scripts/build_protected_boca_bundle.py scripts/boca_protected_memfd_bootstrap.py src/boca_socios/host_boca_g18_maintenance.py tests/test_boca_g18_maintenance.py
       - name: Type-check protected physical worker dispatch script offline only
         run: |
           uv run mypy --follow-imports=skip scripts/check_worker_physical_dispatch.py

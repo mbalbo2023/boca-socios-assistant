@@ -555,7 +555,7 @@ def verify(
         allowlisted = (
             (G18_MAINTENANCE_ENTRIES,)
             if g18_maintenance
-            else             (PAIR_INCIDENT_1241_ENTRIES,)
+            else (PAIR_INCIDENT_1241_ENTRIES,)
             if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
             else (TELEGRAM_INITIALIZER_ENTRIES,)
             if telegram_initializer_recover
@@ -739,7 +739,11 @@ def main() -> int:
             5 if sys.argv[2] == "boca-installed-status-observe" else 6
         ):
             raise ValueError("installed Boca administration requires exact observer coordinates")
-        if g18_maintenance and (len(sys.argv) != 5 or re.fullmatch(r"[1-9][0-9]{0,19}", sys.argv[3]) is None or re.fullmatch(r"[a-f0-9]{40}", sys.argv[4]) is None):
+        if g18_maintenance and (
+            len(sys.argv) != 5
+            or re.fullmatch(r"[1-9][0-9]{0,19}", sys.argv[3]) is None
+            or re.fullmatch(r"[a-f0-9]{40}", sys.argv[4]) is None
+        ):
             raise ValueError("G18 maintenance requires authenticated run and workflow source")
         if binding_observe and len(sys.argv) != 4:
             raise ValueError("Boca binding observer requires one GitHub run ID only")
@@ -764,7 +768,7 @@ def main() -> int:
         bound = (
             G18_MAINTENANCE_MAX_ZIP
             if g18_maintenance
-            else             PAIR_INCIDENT_1241_MAX_ZIP
+            else PAIR_INCIDENT_1241_MAX_ZIP
             if pair_upgrade_incident_observe_1241 or pair_upgrade_incident_observe_1251
             else TELEGRAM_INITIALIZER_MAX_ZIP
             if telegram_initializer_recover
