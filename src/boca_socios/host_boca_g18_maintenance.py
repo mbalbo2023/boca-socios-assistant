@@ -15,12 +15,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
-
 from boca_socios import host_boca_binding_observe as binding
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_on_demand_service as service
+from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
 
 INSTALL_SOURCE = "afb0ac0acadbd67e6ccfb7875be4927aaeb43eb8"
 CONTROLLER = "cc058236f6f9e5372661c80355ae9454ddc643ed705fcb93c54e3d0741b7c167"
