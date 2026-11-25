@@ -1,7 +1,7 @@
 # Official multi-platform index digest of Python 3.12.15 Alpine 3.24.
 # Verify/update the digest through a reviewed dependency PR; never float it.
 # A successful image build does NOT authorize a production deployment.
-FROM python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d AS build
+FROM python:3.15.2-alpine3.24@sha256:0f9552bb28711333da16915ec146f5e6bb44a7fdac9ced15dc17c2e0206346dd AS build
 
 WORKDIR /app
 RUN python -m pip install --disable-pip-version-check --no-cache-dir uv==0.13.4
@@ -13,7 +13,7 @@ COPY src ./src
 # The final pass still installs the non-editable Boca application itself.
 RUN uv sync --locked --no-dev --no-editable
 
-FROM python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d AS runtime
+FROM python:3.15.2-alpine3.24@sha256:0f9552bb28711333da16915ec146f5e6bb44a7fdac9ced15dc17c2e0206346dd AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH=/app/.venv/bin:$PATH \
